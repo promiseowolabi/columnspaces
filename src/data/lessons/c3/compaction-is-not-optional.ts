@@ -1,0 +1,335 @@
+import type { Lesson } from '../types'
+
+const lesson: Lesson = {
+  id: 'c3.l5',
+  slug: 'compaction-is-not-optional',
+  trackId: 'c3',
+  index: 5,
+  title: 'Compaction Is Not Optional',
+  minutes: 20,
+  hook: 'A table format hands you atomic commits and cheap planning, and hands you back three jobs you now have to run forever. Skip them and the table degrades on a schedule you did not choose and cannot see on a bytes-scanned dashboard.',
+  exercise: 'quiz',
+  artifact: 'platform-runbook',
+  takeaway: {
+    number: '3 jobs',
+    claim:
+      'Compaction, snapshot expiry and orphan cleanup are mandatory operations with a standing budget — on C2.L5\'s incident that budget is about 1.4 TB of rewrite per day, roughly 15% of a 9 TB table, and none of it produces anything a user can see.',
+  },
+  blocks: [
+    {
+      type: 'prose',
+      md: `C3.L3 bought you atomic commits and planning that does not enumerate storage. C3.L4 measured what one small change costs. Put the two together and the standing obligation falls out: **immutable files plus frequent commits produce garbage at a predictable rate, and something has to remove it at the same rate.**
+
+There are exactly three kinds of garbage, they are produced by three different mechanisms, and no single job removes more than one of them.
+
+| job | what it removes | what finds it | what happens if you never run it |
+|---|---|---|---|
+| **compaction** | small files, by merging them into large ones | the metadata: file sizes are recorded per file | planning cost grows without bound; C2.L5 measured it reaching 61% of query time |
+| **snapshot expiry** | files that a *former* snapshot referenced and the current one does not | the metadata: each snapshot records what it removed | storage grows with retained history; one retained snapshot measured over 1.8× on C3.L4's coarsest layout |
+| **orphan cleanup** | files that **no** snapshot ever referenced — failed commits, retries, aborted jobs | **nothing in the metadata.** Only a listing pass diffed against the tree | storage grows with your failure rate, invisibly and permanently |
+
+Read that last row again, because it is the one people discover late. An orphan is not stale — it is **unknown**. C3.L3's commit writes data files, manifests and a metadata file *before* the pointer swap; if the swap loses, those bytes exist and nothing references them. Snapshot expiry cannot help, because expiry removes what a snapshot listed and these were never listed. A query cannot help, because a query only reaches files through manifests. The only mechanism that will ever find them is a full listing of the storage prefix compared against every file the metadata tree reaches — which is the expensive operation the whole format was designed to avoid, run deliberately, on a schedule.
+
+**These are not optimisations. They are the running cost of the design**, and the honest way to present a table format in a review is: it converts a correctness problem into three scheduled jobs with a budget.`,
+    },
+    {
+      type: 'prose',
+      md: `## Read amplification versus write amplification, and why compaction is a trade rather than a win
+
+Two ratios, both counts, and every maintenance decision in this lesson is a movement along the line between them.
+
+\`\`\`text
+read amplification  = bytes (or files, or requests) a query touches
+                      ÷ bytes it logically needs
+
+write amplification = bytes written to storage
+                      ÷ bytes logically changed
+\`\`\`
+
+**Compaction lowers read amplification by spending write amplification.** That is the entire mechanism, and it is worth being blunt about the fact that compaction is *itself* a copy-on-write rewrite — the same arithmetic C3.L4 measured, pointed at a different goal. Merging small files into large ones reads every byte and writes every byte, and produces exactly zero new rows.
+
+Take C2.L5's incident and cost the version of compaction that actually keeps up:
+
+\`\`\`text
+creation rate      9,600 files/hour  x  6 MB average
+                =  57.6 GB/hour read  +  57.6 GB/hour written
+                ≈  1.4 TB/day of rewrite
+on a 9 TB table =  about 15% of the table, rewritten daily, forever
+\`\`\`
+
+**1.4 TB a day with no user-visible product**, to undo a decision made in an ingest configuration. And the rate-matching condition is the unforgiving part, because it is not a size problem:
+
+\`\`\`text
+merge rate ≥ creation rate,  or the backlog is UNBOUNDED
+
+observed:   9,600 created/hour vs 5,000 merged/hour
+deficit:    4,600/hour = 110,400/day
+backlog:    940,000 files ≈ 8.5 days of deficit
+\`\`\`
+
+No cluster size fixes a deficit; a deficit accumulates. So compaction capacity is a *rate* you size against a *rate*, and the leverage is on the input side — the commit interval, the partition count and the writer count, which is C2.L5's product. That lesson also gives you the floor compaction cannot cross: a file belongs to exactly one partition, so compaction cannot merge across a partition boundary, and **25 GB/day ÷ 512 MB ≈ 48 actively-written partitions** is the arithmetic ceiling past which files are permanently small.
+
+**Snapshot expiry lowers storage by spending your recovery window.** Same structure, different currencies, and C3.L4 measured both ends: over 1.8× storage for one retained snapshot on a single-file layout, and expiry reclaiming exactly the superseded bytes while making the old snapshot unreadable.
+
+**Orphan cleanup lowers storage by spending a full listing pass** — and, if you get its retention threshold wrong, by spending correctness. More on that below.
+
+There is a fourth job hiding inside compaction, and it gets forgotten because it has no user-visible symptom until planning slows down: **the metadata needs compacting too.** Every commit writes a manifest list and at least one manifest, so a fast commit loop grows the metadata tree at the same rate it grows the file list. Rewriting manifests is a distinct operation from rewriting data files, and Delta's equivalents — checkpoints, log compaction files, and metadata cleanup — are likewise separate from VACUUM.`,
+    },
+    {
+      type: 'prose',
+      md: `## The budget, in counts a reviewer can check
+
+"We run compaction" is not a plan. A budget is, and every line of it is a count rather than a clock, so it means the same thing on every platform and can be checked next month.
+
+**Compaction**
+- **bytes rewritten per day**, and that as a **percentage of table size per day**. 1.4 TB/day on 9 TB is 15%/day; if that number is above about 20% you are rewriting the table every five days to service an ingest configuration and the ingest configuration is the thing to change.
+- **files merged per hour against files created per hour**, on one axis. The failure is a crossing, and a crossing is visible weeks before a backlog is.
+- **target file size, and the average achieved size** beside it. C2.L5's floor arithmetic tells you whether the target is even reachable: daily ingest ÷ partitions written per day.
+- **compaction backlog slope**, not level. The level tells you how long ago the crossing happened.
+
+**Snapshot expiry**
+- **retention window**, stated as a decision with an owner, plus the **storage multiple** it costs on this table's rewrite rate. C3.L4's measurement is the template: a retained snapshot on a coarse layout can more than double storage.
+- **snapshots retained** and **bytes pinned by the oldest retained reference.** A single long-lived tag pins every file its snapshot needs, indefinitely, and that is a very common surprise.
+
+**Orphan cleanup**
+- **frequency**, and the **age threshold** below which a file is never considered an orphan.
+- **bytes reclaimed per run**, which is a direct read on your commit failure rate. If it climbs, you have a retry problem rather than a storage problem.
+
+**Metadata maintenance**
+- **manifests or log entries per commit** and **commits per day** — the metadata twin of the file-count product.
+- **checkpoint or manifest-rewrite cadence**, and the count of metadata files a cold reader must fetch to plan a query. This is the number that makes planning cost visible before a user complains.
+
+And then the sentence that makes it a design rather than a wish, said the way C2.L6 taught: *"this table needs about 15% of its bytes rewritten daily to hold its file count flat, we have sized the compaction job for 1.2× the observed creation rate, we retain seven days of snapshots at a measured storage cost of 1.4× live size, orphan cleanup runs weekly with a three-day age threshold, and if the ingest interval halves, all four of those numbers double."*`,
+    },
+    {
+      type: 'vendor',
+      snapshot: '2026-09',
+      title: 'Both specifications treat maintenance as an owned operation, not as housekeeping',
+      systems: ['iceberg', 'delta'],
+      sources: [
+        'https://iceberg.apache.org/spec/',
+        'https://raw.githubusercontent.com/delta-io/delta/master/PROTOCOL.md',
+      ],
+      md: `**Iceberg.** The file-system contract includes deletes because *"tables delete files that are no longer used"* — removal is part of the design, not an afterthought. The **Snapshot Retention Policy** section specifies expiry as an algorithm over \`min-snapshots-to-keep\`, \`max-snapshot-age-ms\` and \`max-ref-age-ms\`, evaluated per branch and tag, with the \`main\` reference never expiring. The manifest-entry documentation explains why removal is tracked per snapshot rather than computed: technically a data file can be deleted once the last snapshot listing it as live is collected, *"but this is harder to detect and requires finding the diff of multiple snapshots. It is easier to track what files are deleted in a snapshot and delete them when that snapshot expires."* That sentence is the reason orphan cleanup has to be a separate mechanism — the bookkeeping is per-snapshot, and an orphan is in no snapshot. Compaction appears in the spec as the \`replace\` snapshot operation, defined as data and delete files added and removed **without changing table data** — the format's own admission that this work produces no rows. Note also that a \`replace\` must validate at commit time that the files it is replacing are still in the table, so compaction can lose a race with a concurrent writer and must retry.
+
+**Delta.** Physical deletion is deferred by design: a \`remove\` action is a **tombstone** that must remain in table state until it expires, because the delay *"allows concurrent readers to continue to execute against a stale snapshot of the data"*, and the physical files are removed by \`vacuum\` after a user-specified retention period documented with a **default of 7 days**. The **Metadata Cleanup** procedure is specified step by step — pick a cutoff, find the newest checkpoint not newer than the cutoff commit, delete log entries, checkpoints, checksum files and log compaction files before it, then delete unreferenced sidecars while **preserving files less than a day old so in-progress checkpoints are not broken.** That one-day guard is the same hazard orphan cleanup has, written into a specification.
+
+Most pointedly, under the \`catalogManaged\` table feature Delta states that maintenance operations are **prohibited by default unless the managing catalog explicitly permits the client to run them** — with checkpoints, log compaction and version checksums the only exceptions, because they are essential for basic reads and writes. Everything else, and it names them, requires permission: *"Log and other metadata files clean up"*, *"Data files cleanup, for example VACUUM"*, *"Data layout changes, for example OPTIMIZE and REORG"*.
+
+Two engines, two vocabularies, one architectural fact: **compaction, expiry and cleanup are operations with an owner, a schedule and a failure mode — never background behaviour you inherit for free.** Re-check the constants against your version; the ownership is durable.`,
+    },
+    {
+      type: 'diagram',
+      caption: 'fig 1 — three jobs, three currencies, and one rate condition that has no steady state if it fails',
+      height: 70,
+      nodes: [
+        { id: 'create', x: 2, y: 2, w: 30, h: 9, label: 'files created/hour', sub: 'commits × partitions × writers', color: '#FB7185' },
+        { id: 'merge', x: 35, y: 2, w: 30, h: 9, label: 'files merged/hour', sub: 'what the job actually sustains', color: '#3EF2A4' },
+        { id: 'slope', x: 68, y: 2, w: 30, h: 9, label: 'the backlog SLOPE', sub: 'level tells you when it crossed', color: '#FBBF24' },
+        { id: 'comp', x: 2, y: 15, w: 30, h: 11, label: '1 · compaction', sub: 'lowers read amp · costs write amp · 1.4 TB/day here', color: '#22D3EE' },
+        { id: 'exp', x: 35, y: 15, w: 30, h: 11, label: '2 · snapshot expiry', sub: 'lowers storage · costs your recovery window', color: '#A78BFA' },
+        { id: 'orph', x: 68, y: 15, w: 30, h: 11, label: '3 · orphan cleanup', sub: 'lowers storage · costs a full listing pass', color: '#FB923C' },
+        { id: 'meta', x: 2, y: 30, w: 96, h: 9, label: 'and the fourth, forgotten one: manifests and log entries accumulate per commit', sub: 'rewriting metadata is a separate job from rewriting data, with its own cadence and its own planning cost', color: '#94A3B8' },
+        { id: 'budget', x: 2, y: 43, w: 96, h: 10, label: 'the budget, in counts: bytes rewritten/day · % of table/day · merged vs created · retained snapshots × pinned bytes', sub: 'plus the age threshold on orphan cleanup, which is a correctness parameter rather than a storage one', color: '#A3E635' },
+        { id: 'unmaint', x: 2, y: 57, w: 46, h: 10, label: 'unmaintained: planning share 4% → 61%', sub: 'while bytes scanned, the metric on the dashboard, does not move', color: '#FB7185' },
+        { id: 'sched', x: 52, y: 57, w: 46, h: 10, label: 'degradation on a schedule nobody set', sub: '940,000-file backlog ≈ 8.5 days of a 4,600/hour deficit', color: '#FB7185' },
+      ],
+      edges: [
+        { from: 'create', to: 'merge' },
+        { from: 'merge', to: 'slope' },
+        { from: 'create', to: 'comp' },
+        { from: 'comp', to: 'exp' },
+        { from: 'exp', to: 'orph' },
+        { from: 'comp', to: 'meta' },
+        { from: 'meta', to: 'budget' },
+        { from: 'budget', to: 'unmaint' },
+        { from: 'slope', to: 'sched' },
+      ],
+      steps: [
+        {
+          caption:
+            'Start with the two rates, on one axis. File creation is C2.L5\'s product of commits, partitions and writers; merge rate is whatever your compaction job actually sustains. Everything else in this diagram is downstream of their difference.',
+          active: ['create', 'merge', 'slope'],
+          edges: ['create->merge', 'merge->slope'],
+        },
+        {
+          caption:
+            'Compaction is the first job and it is not free: it lowers read amplification by spending write amplification, rewriting every byte it merges. On this incident, keeping pace means about 1.4 TB rewritten per day and produces no new rows at all.',
+          active: ['comp'],
+          edges: ['create->comp'],
+        },
+        {
+          caption:
+            'Expiry is the second, and it trades storage against your recovery window — the superseded files stay until it runs, and once it has run the old snapshot is gone. Orphan cleanup is the third, and only a full listing pass can find its garbage.',
+          active: ['exp', 'orph'],
+          edges: ['comp->exp', 'exp->orph'],
+        },
+        {
+          caption:
+            'The forgotten fourth: manifests and log entries accumulate per commit, so a fast commit loop grows the metadata tree at the same rate it grows the file list, and rewriting that metadata is a separate job with its own cadence.',
+          active: ['meta'],
+          edges: ['comp->meta'],
+        },
+        {
+          caption:
+            'A budget makes all of it reviewable, and every line is a count rather than a clock: bytes rewritten daily, that as a share of the table, merge rate against creation rate, retained snapshots and the bytes they pin.',
+          active: ['budget'],
+          edges: ['meta->budget'],
+        },
+        {
+          caption:
+            'Skip the budget and the degradation is real but invisible in the wrong place: planning went from 4% to 61% of query time while bytes scanned — the metric this course is built on — did not move at all.',
+          active: ['unmaint', 'sched'],
+          edges: ['budget->unmaint', 'slope->sched'],
+        },
+      ],
+    },
+    {
+      type: 'statline',
+      stats: [
+        {
+          value: '1.4 TB/day',
+          label: 'rewrite needed to hold the file count flat on a 9 TB table',
+          hint: '9,600 files/hour × 6 MB, read and written. About 15% of the table daily, with no user-visible product — the write-amplification bill for an ingest interval decision.',
+        },
+        {
+          value: '4,600/hour',
+          label: 'deficit between creation and merge rates in C2.L5\'s incident',
+          hint: '9,600 created against 5,000 merged. A deficit accumulates without bound: no cluster size fixes it, only a change to the input rate.',
+        },
+        {
+          value: '3 + 1',
+          label: 'maintenance jobs a table format obliges you to run',
+          hint: 'Compaction, snapshot expiry and orphan cleanup, plus metadata compaction — manifest rewriting or checkpointing — which has no symptom until planning slows down.',
+        },
+        {
+          value: '61%',
+          label: 'of query time spent planning on an unmaintained table',
+          hint: 'Up from 4%, with identical data and identical queries. Bytes scanned did not change, which is why this class of incident is invisible on a scan-volume dashboard.',
+        },
+      ],
+    },
+    {
+      type: 'callout',
+      variant: 'segfault',
+      title: 'orphan cleanup with a short age threshold deletes files a commit is about to reference',
+      md: `Orphan cleanup works by listing storage and deleting anything the metadata tree does not reach. Now consider what an in-flight commit looks like from the outside: **data files that exist and are referenced by nothing yet**, because the pointer swap has not happened. That is byte-for-byte indistinguishable from an orphan.
+
+So a cleanup pass with no age threshold — or one shorter than your longest-running write — will delete the data files of a commit that is still being assembled. The commit then succeeds, the metadata references paths that no longer exist, and the failure surfaces at query time on somebody else's dashboard, on a table nobody touched. It is the worst class of data-platform bug: caused by a maintenance job, attributed to a query engine, reproducible only under load.
+
+The specifications guard exactly this hazard, and it is worth noticing that they had to:
+
+- Delta's metadata cleanup procedure requires **preserving sidecar files less than a day old** *"to not break in-progress checkpoints"*.
+- Delta defers physical file deletion behind a retention period specifically so that *"concurrent readers can continue to execute against a stale snapshot"* — the same shape of guard, aimed at readers rather than writers.
+
+Three rules that follow:
+
+1. **The age threshold is a correctness parameter, not a storage one.** Set it above your longest possible write plus a wide margin. Days, not minutes.
+2. **Never run orphan cleanup with an ad-hoc script during an incident**, which is exactly when long-running backfills and retries are in flight.
+3. **A reader also holds a snapshot.** Expiring snapshots faster than your longest-running query can finish will make queries fail on files that vanished mid-scan. Retention has to cover the slowest consumer, not the average one.`,
+    },
+    {
+      type: 'callout',
+      variant: 'warning',
+      title: 'the degradation nobody scheduled, and the four counts that would have caught it',
+      md: `An unmaintained table does not break. It gets worse, monotonically, at a rate set by your commit interval — and the metric this course spent five lessons teaching you to defend **does not move.** Same data, same predicates, same bytes scanned, and a query that now spends most of its life before touching a byte. Column Week's \`small-file-storm\` drill is this arriving as an incident: a freshness target met exactly as designed, 120 files an hour becoming 9,600, average file size 240 MB becoming 6 MB, and planning going from 4% to 61% of query time with a 940,000-file backlog behind it.
+
+The four counts that make it visible weeks earlier, all of them counts rather than clocks:
+
+- **live file count, with average file size beside it.** Either one alone is meaningless.
+- **files touched per query, per query class.** This is what turns "the table has a lot of files" into "this dashboard enumerates 109,000 of them".
+- **planning share of query time** — the single most diagnostic series in the drill, and almost nobody graphs it.
+- **creation rate and merge rate on the same axis.** The failure is a crossing.
+
+And the trigger, because a monitor with no attached action is a graph nobody reads: who runs compaction, at what capacity, and what changes when the backlog slope goes positive. If the answer to the first question is "it is a background feature of the platform", read C3.L4's vendor note again — under a catalog-managed table, maintenance is prohibited unless something explicitly authorises it. Somebody owns this. Find out who before the drill does.`,
+    },
+    {
+      type: 'isomorphism',
+      title: 'three maintenance jobs ≡ three you already staff',
+      pairs: [
+        {
+          os: 'garbage collection in a managed runtime',
+          osLine:
+            'Reachability from roots decides what is live. Unreachable objects are collected; the collector costs CPU you would rather spend on work, and tuning it is a rate problem, not a size problem.',
+          llm: 'snapshot expiry and orphan cleanup',
+          llmLine:
+            'Reachability from the current pointer decides what is live, and the two jobs split by *how* something became unreachable — superseded (the metadata knows) versus never referenced (only a listing knows).',
+        },
+        {
+          os: 'log rotation and index rebuilds',
+          osLine:
+            'Boring, scheduled, invisible when working, and the cause of a surprising share of production incidents when skipped. Nobody argues about whether to do it; the argument is about the window and the capacity.',
+          llm: 'compaction and manifest rewriting',
+          llmLine:
+            'Same status, same argument. The mistake is treating them as optimisations to be justified per-quarter instead of as a standing budget with a rate condition attached.',
+        },
+        {
+          os: 'a queue whose arrival rate exceeds its service rate',
+          osLine:
+            'Utilisation at or above one has no steady state. The backlog grows without bound and the only fix is changing the arrival rate — no consumer size works.',
+          llm: 'compaction against ingest',
+          llmLine:
+            'Identical, and identically diagnosed: graph both rates on one axis and look for the crossing. 9,600 against 5,000 is a 110,400-file-per-day deficit, which is what a 940,000-file backlog is made of. (C2.L5 derives it.)',
+        },
+      ],
+    },
+    {
+      type: 'quiz',
+      questions: [
+        {
+          q: 'You are asked to justify a standing compaction budget on a 9 TB table that ingests via 30-second micro-batches. Finance wants to know what the spend buys, given that query volume has not changed. What is the defensible answer?',
+          options: [
+            '"It reduces bytes scanned, which is the line item on the invoice, so it pays for itself directly."',
+            '"It buys a flat file count. Holding it flat costs about 1.4 TB of read plus 1.4 TB of write per day — roughly 15% of the table, daily — and it produces no rows. What we get is planning cost that stays at a few percent of query time instead of climbing to 61%, plus per-request charges and compute-seconds that stay flat. If we do not fund it, the deficit is 4,600 files an hour and the backlog is unbounded: there is no cluster size that catches up. The cheaper alternative is to raise the batch interval, which reduces the input rate and shrinks this budget proportionally."',
+            '"Compaction is a best practice for table formats and every vendor recommends it."',
+            '"It reduces storage, because merged files compress better than small ones."',
+          ],
+          correct: [1],
+          explanation:
+            'The defensible version prices the work in the currency it actually consumes, names what it does not buy, and offers the cheaper lever. It does *not* claim a reduction in bytes scanned, because file count barely moves that number — C2.L5\'s trap exactly: the savings are in request counts, compute-seconds, planning share and the ad-hoc queries that are currently unusable, and quoting the 61% planning share as a cost reduction is wrong on a shape that bills bytes rather than time. The rate-matching point is what converts this from a nice-to-have into a funding decision: a deficit accumulates without bound, so under-funding is not "slower", it is "never catches up". Better compression on merged files is real but second-order next to 1.4 TB/day of rewrite, and "best practice" is the answer that loses the room.',
+        },
+        {
+          q: 'A storage audit finds 400 TB in a table\'s prefix while the current snapshot references 180 TB and retained snapshots account for another 60 TB. Snapshot expiry has been running nightly and completes cleanly. Where is the remaining 160 TB, and what removes it?',
+          options: [
+            'Retained snapshots that expiry has not caught up with yet; running it more often will reclaim the space',
+            'Orphan files — data written by commits that failed the pointer swap, and by retried or aborted jobs. No snapshot ever referenced them, so expiry cannot see them; only a listing pass diffed against the metadata tree will find them, and the size is a direct read on the commit failure rate',
+            'Compaction has not run, so the space is small files that a merge will consolidate',
+            'The metadata tree itself, since manifests and metadata files accumulate per commit',
+          ],
+          correct: [1],
+          explanation:
+            'Expiry\'s bookkeeping is per-snapshot: a snapshot records the files it removed, and those files are deleted when that snapshot expires. A file that was never listed by any snapshot is outside that mechanism entirely, so expiry can run perfectly forever and never touch it. That is why orphan cleanup exists as a separate job with a separate mechanism — a full listing of the prefix compared against everything the metadata tree reaches, which is precisely the expensive operation the format was designed to avoid, run deliberately. Compaction is a red herring here: merging small files does not change the total, it changes the count, and these files are not in the table to be merged. Metadata is real but is orders of magnitude too small to explain 160 TB. And the number is diagnostic beyond storage: 160 TB of orphans means a lot of commits are failing, so the follow-up is the retry rate, not just the cleanup schedule.',
+        },
+        {
+          q: 'A platform team schedules orphan cleanup hourly with a 15-minute age threshold to keep storage tight. What is the risk, and what is the correct threshold?',
+          options: [
+            'No risk — files younger than 15 minutes are unlikely to matter, and tighter cleanup means lower storage cost',
+            'An in-flight commit\'s data files are referenced by nothing until the pointer swap, so they are indistinguishable from orphans: cleanup will delete files a commit is about to reference, and the table then points at paths that do not exist. The threshold must exceed the longest possible write plus a margin — days, not minutes — and it must also cover the longest-running reader holding an older snapshot',
+            'The risk is only wasted requests from listing too often; the threshold can stay short if the listing cost is acceptable',
+            'The risk is that compaction output gets deleted, so the fix is to run compaction and cleanup in the same job',
+          ],
+          correct: [1],
+          explanation:
+            'This is the maintenance job that can cause data loss, and the mechanism is exactly the one that makes atomic commits possible: everything is written before the swap, so during a commit there are real files that no metadata references. Deleting them produces a table whose manifests name missing paths, and the failure appears at query time, attributed to the engine, on a table nobody changed. Both specifications guard the same hazard — Delta\'s metadata cleanup preserves sidecars under a day old to avoid breaking in-progress checkpoints, and defers physical deletion so concurrent readers on stale snapshots keep working. So the threshold is a correctness parameter set by your slowest writer and your slowest reader, not a storage-tightness dial. Coupling the jobs does not help; a long backfill can outlive any single job\'s run.',
+        },
+      ],
+    },
+    {
+      type: 'deepdive',
+      title: 'going deeper: maintenance as a first-class part of the design',
+      md: `The best available framing is not a database paper: it is **queueing theory**. Arrival rate against service rate, and the result that utilisation at or above one has no steady state. C2.L5 derives the compaction version; if you have internalised it for request queues you already own the model, with files as customers and the merge job as the server. Little's law gives you the backlog-to-latency translation for free.
+
+For compaction *policy* rather than compaction capacity, the LSM literature is where the tradeoff was worked out with the currencies named: **O'Neil et al., "The Log-Structured Merge-Tree" (1996)** for the original, **Dayan, Athanassoulis and Idreos, "Monkey" (SIGMOD 2017)** and **"Dostoevsky" (SIGMOD 2018)** for tiering versus levelling and how the choice moves read, write and space amplification independently. **Athanassoulis et al., "The RUM Conjecture" (EDBT 2016)** is the one-page version you can put in a design document. Then read **Luo and Carey's survey, "LSM-based storage techniques: a survey" (VLDB Journal 2020)** — it is the most complete map of the policy space and it names the space-amplification term that snapshot retention corresponds to.
+
+For the format-specific procedures, read **Iceberg's maintenance documentation next to the spec's Snapshot Retention Policy section**, and **Delta's Metadata Cleanup and VACUUM sections** in PROTOCOL.md. The instructive part in both is how much of the text is about *safety guards* rather than about reclaiming space — age thresholds, in-progress operations, concurrent readers. That ratio is the honest signal about which parts of this are dangerous.
+
+On the operational side, the SRE literature on **leading versus lagging indicators** is the right frame for why backlog *slope* and planning *share* belong on a dashboard next to spend, and why an invoice is the worst possible detector for this class of regression. **Toil** is the other concept worth borrowing directly: three jobs that scale with the table and produce nothing a user can see is the textbook definition, which is an argument for automating them properly rather than for running them by hand more often.
+
+Where this goes next in the course: the **compaction desk** grades a policy with a stated **write-amplification budget** — a policy without one is an unbounded background bill — and the **platform runbook** artifact is where these three jobs get owners, schedules and triggers. **C5** builds the merge-on-read side and grades \`read_amp_bounded\` against \`write_amp_budget\` directly, which is this lesson's trade made pass/fail. **A2** treats the catalog as the control plane that authorises maintenance, which is the direction both specifications are already moving.
+
+Next: **C4** leaves storage behind. You can now read a file, plan a scan and maintain a table; the bill moves to what the CPU does with the bytes once they arrive, and the answer is not a faster loop — it is a different machine.`,
+    },
+  ],
+}
+
+export default lesson

@@ -14,6 +14,20 @@ name = "kslab"
 version = "0.1.0"
 
 [[package]]
+name = "parquet-reader"
+version = "0.1.0"
+dependencies = [
+ "kslab",
+]
+
+[[package]]
+name = "vectorized"
+version = "0.1.0"
+dependencies = [
+ "kslab",
+]
+
+[[package]]
 name = "zone-maps"
 version = "0.1.0"
 dependencies = [

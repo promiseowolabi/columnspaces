@@ -29,6 +29,8 @@ import { duckLabMeta } from '@/data/duck-labs'
 import CodecBenchLab from './CodecBenchLab'
 import ScanBillLab from './ScanBillLab'
 import PruningLab from './PruningLab'
+import ParquetAnatomyLab from './ParquetAnatomyLab'
+import SnapshotLab from './SnapshotLab'
 
 /**
  * The registry. Populated as each lab lands (phase 2 onward, PLAN.md).
@@ -39,6 +41,8 @@ const REGISTRY: Record<string, (p: { trackColor: string }) => ReactNode> = {
   'scan-bill': ScanBillLab,
   'pruning-lab': PruningLab,
   'codec-bench': CodecBenchLab,
+  'parquet-anatomy': ParquetAnatomyLab,
+  'snapshot-lab': SnapshotLab,
 }
 
 export function DuckLabView({ lab, trackColor }: { lab: string; trackColor: string }) {

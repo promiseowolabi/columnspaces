@@ -16,6 +16,7 @@ import { browserLabMeta } from '@/data/browser-labs'
 import { cn } from '@/lib/utils'
 import { useLabCompletion, type LabTask } from './shared'
 import LayoutDesignerLab from './LayoutDesignerLab'
+import BatchMachineLab from './BatchMachineLab'
 
 export type { LabTask }
 
@@ -97,6 +98,7 @@ export function LabShell({
  */
 const REGISTRY: Record<string, (p: { trackColor: string }) => ReactNode> = {
   'layout-designer': LayoutDesignerLab,
+  'batch-machine': BatchMachineLab,
 }
 
 /** Renders a `lab` content block. Unknown ids render a gentle placeholder. */

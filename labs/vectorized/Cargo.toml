@@ -1,0 +1,16 @@
+[package]
+name = "vectorized"
+version = "0.1.0"
+edition = "2021"
+description = "forge lab 03 — selection vectors, a batched filter and hash aggregate, and an execute-on-compressed path that agrees with the decoded one (columnspaces)"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+kslab = { path = "../kit" }
+
+[profile.release]
+opt-level = 2
+debug = false

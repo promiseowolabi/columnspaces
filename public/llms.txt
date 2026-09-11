@@ -67,13 +67,21 @@ _Compression makes bytes smaller; layout makes them unread. Row groups, min/max 
 
 _A modern table is a tree of immutable files plus metadata describing which of them count right now. This track opens the actual bytes: Parquet's footer, Iceberg's manifest tree, and how snapshot isolation works when the storage layer offers you almost no guarantees._
 
-
+- [C3.L1 Parquet to the Byte](https://promiseowolabi.github.io/columnspaces/lessons-md/c3.l1.md): The footer is 0.024% of a four-column file and 16.36% of a thirty-three-column one written in small row groups. Same rows, same values, same codec — and in the second case a sixth of your storage is description.
+- [C3.L2 What the Footer Cannot Tell You](https://promiseowolabi.github.io/columnspaces/lessons-md/c3.l2.md): Flip one byte inside a data page and the file still opens, the footer still parses, 131,072 rows still come back, and the aggregate is silently wrong. Three cruder corruptions are refused instantly. That asymmetry is the finding.
+- [C3.L3 A Table Is a Tree of Files](https://promiseowolabi.github.io/columnspaces/lessons-md/c3.l3.md): Every guarantee a table format gives you — atomic commits, serializable reads, time travel — rests on exactly one atomic operation: swapping a single pointer. Everything else in the tree exists because listing a directory is neither cheap nor consistent.
+- [C3.L4 Copy-on-Write and Time Travel](https://promiseowolabi.github.io/columnspaces/lessons-md/c3.l4.md): Three rows change. Forty-nine thousand one hundred and fifty-two rows get rewritten, read first and then written back, and the originals stay on disk until something deletes them. Every number in that sentence is measured in the tab.
+- [C3.L5 Compaction Is Not Optional](https://promiseowolabi.github.io/columnspaces/lessons-md/c3.l5.md): A table format hands you atomic commits and cheap planning, and hands you back three jobs you now have to run forever. Skip them and the table degrades on a schedule you did not choose and cannot see on a bytes-scanned dashboard.
 
 ### C4 — Vectorized Execution
 
 _Row-at-a-time execution spends most of its cycles on bookkeeping. Column-at-a-time is not a faster loop, it is a different machine: batches, selection vectors, late materialization, and operators that never assemble a tuple at all._
 
-
+- [C4.L1 A Different Machine, Not a Faster Loop](https://promiseowolabi.github.io/columnspaces/lessons-md/c4.l1.md): A batch of one row costs 1,662,333 modelled operations. Tuple-at-a-time costs 1,351,892 for the same answer. Batching is not a faster loop — it is a machine with a fixed cost per batch, and below eight rows it loses.
+- [C4.L2 Selection Vectors](https://promiseowolabi.github.io/columnspaces/lessons-md/c4.l2.md): Two chained predicates over 131,072 rows: 0 values copied, and the second comparison is evaluated 89,618 times instead of 131,072. The filter never touched a row — it wrote down positions.
+- [C4.L3 Late Materialization](https://promiseowolabi.github.io/columnspaces/lessons-md/c4.l3.md): Forge lab 03's storm scans 37,915 rows through two chained predicates and materialises exactly 4,871 values — one per survivor, once per batch, at the end. The other 33,044 rows were never assembled into anything.
+- [C4.L4 Hash Aggregation on Batches](https://promiseowolabi.github.io/columnspaces/lessons-md/c4.l4.md): Forge lab 03 plants a group key at exactly one row of one batch, and 32 of its 80 multi-batch queries are graded on whether that group survives. A hash table that belongs to the batch loses it silently.
+- [C4.L5 SIMD, Morsels and the Limits](https://promiseowolabi.github.io/columnspaces/lessons-md/c4.l5.md): A 512-bit register holds 8 int64 lanes, so a perfectly vectorised filter has a ceiling of 8× on instruction count — and none of it reduces the bytes that have to cross the memory system. Which is why this track is fourth and not first.
 
 ### C5 — The Write Path
 

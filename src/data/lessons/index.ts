@@ -38,12 +38,26 @@ import c2l4 from './c2/bloom-filters-and-exact-answers'
 import c2l5 from './c2/the-small-file-problem'
 import c2l6 from './c2/the-pruning-promise'
 
+// C3 — Table Formats
+import c3l1 from './c3/parquet-to-the-byte'
+import c3l2 from './c3/what-the-footer-cannot-tell-you'
+import c3l3 from './c3/a-table-is-a-tree-of-files'
+import c3l4 from './c3/copy-on-write-and-time-travel'
+import c3l5 from './c3/compaction-is-not-optional'
+
+// C4 — Vectorized Execution
+import c4l1 from './c4/a-different-machine-not-a-faster-loop'
+import c4l2 from './c4/selection-vectors'
+import c4l3 from './c4/late-materialization'
+import c4l4 from './c4/hash-aggregation-on-batches'
+import c4l5 from './c4/simd-morsels-and-the-limits'
+
 export const LESSONS_BY_TRACK: Record<TrackId, Lesson[]> = {
   c0: [c0l1, c0l2, c0l3, c0l4, c0l5],
   c1: [c1l1, c1l2, c1l3, c1l4, c1l5],
   c2: [c2l1, c2l2, c2l3, c2l4, c2l5, c2l6],
-  c3: [],
-  c4: [],
+  c3: [c3l1, c3l2, c3l3, c3l4, c3l5],
+  c4: [c4l1, c4l2, c4l3, c4l4, c4l5],
   c5: [],
   c6: [],
   c7: [],

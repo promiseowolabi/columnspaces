@@ -1,0 +1,350 @@
+import type { Lesson } from '../types'
+
+const lesson: Lesson = {
+  id: 'c3.l1',
+  slug: 'parquet-to-the-byte',
+  trackId: 'c3',
+  index: 1,
+  title: 'Parquet to the Byte',
+  minutes: 19,
+  hook: 'The footer is 0.024% of a four-column file and 16.36% of a thirty-three-column one written in small row groups. Same rows, same values, same codec — and in the second case a sixth of your storage is description.',
+  exercise: 'lab+quiz',
+  artifact: 'layout-design',
+  takeaway: {
+    number: '0.024% → 16.36%',
+    claim:
+      'The footer is a per-file cost whose share is set by row groups × leaf columns, so the same 131,072 rows carry a footer worth a rounding error in one layout and a sixth of the file in another — measured, in the tab, from the files\' own metadata.',
+  },
+  blocks: [
+    {
+      type: 'prose',
+      md: `C2 spent six lessons reasoning about statistics, row groups and file counts as abstractions. Every one of those abstractions is a byte range in a real file, and this lesson is where you read them.
+
+Start with the one structural fact that everything else follows from. **A Parquet file's metadata is at the END, and a reader therefore starts at the end and works backwards.**
+
+\`\`\`text
+4-byte magic number "PAR1"
+<column chunks, back to back>
+File Metadata
+4-byte length in bytes of file metadata (little endian)
+4-byte magic number "PAR1"
+\`\`\`
+
+That layout is not an aesthetic choice. A writer streaming rows cannot know where any chunk ended up until it has written them all, so the offsets can only be recorded afterwards — the format's own specification says the metadata is written after the data *to allow for single pass writing*. The consequence for a reader is a fixed opening sequence:
+
+1. read the **last 8 bytes** — the only byte positions in the file you know in advance;
+2. check that the trailing four are \`PAR1\`, then read \`footer_len\` from the four before them;
+3. seek to \`file_len − 8 − footer_len\` and read exactly that many bytes;
+4. now, and only now, you know what the file contains and where every column lives.
+
+Two ranges before a single value is decoded. That is the whole reason columnar storage works over object storage: you can price and plan a scan from a few kilobytes at the end of a file, and then fetch only the ranges you decided you needed.`,
+    },
+    {
+      type: 'prose',
+      md: `## The four levels, and which of them the footer can actually see
+
+C0.L2 named them. Here is what each one *is* on disk, and what a reader is entitled to learn about it without touching data.
+
+| level | what it is physically | what the footer tells you |
+|---|---|---|
+| **file** | magic, chunk payloads, footer, length, magic | row count, row-group count, the writer's name, the schema tree — and **no statistics at all** |
+| **row group** | a horizontal slice; one column chunk per column | rows in the group, and the chunk entries that belong to it |
+| **column chunk** | one column's values for one row group, **guaranteed contiguous** | offset, compressed and uncompressed size, encodings, codec, and the min/max/null-count triple |
+| **page** | the indivisible unit of encoding and compression, header serialised inline with the data | **offsets only** — \`dictionary_page_offset\`, \`data_page_offset\`, \`index_page_offset\` |
+
+Three things in that table are load-bearing and routinely misremembered.
+
+**The column chunk is contiguous, which is what makes projection a range read.** Reading three of forty columns is three byte ranges per row group, not a strided walk. C0.L1's whole measurement rests on this one guarantee.
+
+**There are no file-level statistics.** Parquet defines none. A planner that wants to ask "could this file match?" has to fold the per-chunk entries itself — which is both why the entries exist and why there are so many of them. The parquet-anatomy lab checks this fold against the truth read from the data, because if the two ever disagreed every pruning decision in C2 would be unsound.
+
+**The page level is visible only as offsets.** Page headers live inline with the data, so the footer cannot tell you how many pages a chunk has or what each one contains. Exactly one page-level byte count is derivable from the footer, and the lab derives it honestly: where a dictionary page exists, \`data_page_offset − dictionary_page_offset\` is that page's exact size on disk. Per-page bounds live in the optional \`ColumnIndex\`/\`OffsetIndex\` structures, which the footer views used here do not expose — so the lab reports their absence rather than inventing page statistics.`,
+    },
+    {
+      type: 'vendor',
+      snapshot: '2026-09',
+      title: 'What the Parquet specification actually mandates about the physical file',
+      systems: ['parquet'],
+      sources: [
+        'https://github.com/apache/parquet-format/blob/master/README.md',
+        'https://raw.githubusercontent.com/apache/parquet-format/master/src/main/thrift/parquet.thrift',
+      ],
+      md: `From the format specification and its Thrift definition, the durable facts:
+
+- The file layout is \`PAR1\` … chunks … \`FileMetaData\` … **4-byte little-endian metadata length** … \`PAR1\`. So the trailing eight bytes are the entry point, and the leading four are the cheapest possible identity check.
+- **"File Metadata is written after the data to allow for single pass writing."** Readers are expected to read the file metadata first to find the column chunks they want, then read those chunks sequentially.
+- All Thrift structures are serialised with \`TCompactProtocol\`. That is why footer parsing is not a matter of fixed offsets: the integers are variable-length, and you cannot skip a field you do not understand without decoding it.
+- **Column chunks are contiguous** and are composed of pages written back to back, sharing a common header so readers can skip pages they do not want. A chunk may be partly or completely dictionary-encoded, and the dictionary page — at most one per chunk — must come first.
+- On error recovery the spec is blunt: **"If the file metadata is corrupt, the file is lost."** If a page header is corrupt, the remaining pages in that chunk are lost; if data within a page is corrupt, that page is lost. It also notes the exposure created by putting metadata at the end: if an error happens while writing the file metadata, everything written becomes unreadable.
+- The spec's own sizing recommendations are **512 MB – 1 GB row groups** and **8 KB data pages**, with the reasoning stated in both directions: larger row groups mean larger sequential IO and more write buffering, smaller pages mean finer-grained reads and more page headers.
+
+Note what is *not* mandated: every field of \`Statistics\` is optional, and the page checksum (\`4: optional i32 crc\` on \`PageHeader\`) is optional too. C3.L2 is entirely about what that optionality costs you.`,
+    },
+    {
+      type: 'code',
+      filename: 'the tail, and the two questions you can answer from it',
+      lang: 'sql',
+      chips: ['2 ranges before any value', 'counts, not clocks', 'read from the file, not a trace'],
+      code: `-- the opening sequence, as arithmetic:
+--   read [file_len - 8, file_len)          -> footer_len (u32 LE) + "PAR1"
+--   footer_start = file_len - 8 - footer_len
+--   read [footer_start, file_len - 8)      -> the whole FileMetaData
+--   then, per projected column per row group: one contiguous range
+--
+-- a production reader usually fetches a speculative tail (8-64 KiB) in ONE
+-- request instead of two, trading wasted bytes for a saved round trip,
+-- because on object storage the request count dominates. forge lab 04 does
+-- not model that: there you read the 4-byte length, then the footer it names.
+
+-- level 0: the file block, including what the footer itself costs.
+SELECT created_by, num_rows, num_row_groups, format_version,
+       footer_size, file_size_bytes,
+       footer_size::DOUBLE / file_size_bytes AS metadata_share
+FROM parquet_file_metadata('anatomy-narrow-8k.parquet');
+
+-- levels 2 and 3: one entry per column per row group. THIS is the entry grid.
+SELECT count(*)                        AS stats_entries,
+       count(DISTINCT row_group_id)    AS row_groups,
+       count(DISTINCT path_in_schema)  AS leaf_columns
+FROM parquet_metadata('anatomy-narrow-8k.parquet');
+--   16 row groups x 4 leaf columns = 64 entries. exactly, in every file.
+
+-- level 4, as far as the footer can see it: offsets, and one derivable size.
+SELECT path_in_schema, encodings,
+       dictionary_page_offset, data_page_offset,
+       data_page_offset - dictionary_page_offset AS dictionary_page_bytes
+FROM parquet_metadata('anatomy-narrow-8k.parquet')
+WHERE row_group_id = 0;`,
+    },
+    {
+      type: 'prose',
+      md: `## What the footer costs, measured
+
+The parquet-anatomy lab writes **eight real Parquet files** from the same 131,072 rows — the narrow table at four row-group sizes, a 33-column table at three, and one file whose key is 160 characters wide — then reads every number back out of those files' own metadata. Three findings, in order of how much they change a design.
+
+**One: the entry count is exactly \`row groups × leaf columns\`.** Not approximately. This is the format's grain rather than a measurement, and the lab asserts it exactly in all eight configurations. So the two dials multiply: 33 columns at 2,048 rows per group is 33 × 64 = **2,112 statistics entries** in one file, against 4 × 1 = **4** for the four-column file at one row group. Wide tables and small files are one problem, not two.
+
+**Two: the footer's share of the file rises as row groups shrink, and it can stop being a rounding error.** Measured on real DuckDB runs of this lab: **0.024%** for four columns in a single row group, climbing monotonically across the sweep to **16.36%** for 33 columns in 64 row groups. A sixth of that file is description. Both roads to that corner are ordinary — streaming ingest that lands small files (C2.L5), and wide event tables full of low-cardinality enum columns, where the data side compresses to almost nothing while the entry grid keeps growing.
+
+**Three, and this is the one nobody prices: a statistics entry quotes the actual minimum and maximum VALUES.** So entry *size* is a second, independent driver. The 160-character-key file has **half** the columns of the reference file and the *same* row-group size, and still costs **404 bytes per entry against 87** — because every chunk carries two 160-character strings. That is a direct argument against making a long string your sort key, and it is invisible if you only ever think about row-group size.
+
+The reader's own numbers will differ slightly by DuckDB version and writer heuristics; the *relationships* are what the lab asserts, and it flags an anomaly rather than quietly passing if any of them fails to hold.`,
+    },
+    {
+      type: 'ducklab',
+      lab: 'parquet-anatomy',
+    },
+    {
+      type: 'diagram',
+      caption: 'fig 1 — opening a file you did not write, from the end backwards, and what the description costs',
+      height: 70,
+      nodes: [
+        { id: 'tail', x: 2, y: 2, w: 96, h: 9, label: 'the last 8 bytes: [footer_len : u32 LE][PAR1]', sub: 'the only byte positions a reader knows before it has read anything', color: '#5CA8FF' },
+        { id: 'req1', x: 2, y: 15, w: 30, h: 10, label: 'range 1 — the tail', sub: 'identity check, then the length', color: '#22D3EE' },
+        { id: 'req2', x: 35, y: 15, w: 30, h: 10, label: 'range 2 — the footer', sub: 'at file_len − 8 − footer_len', color: '#22D3EE' },
+        { id: 'req3', x: 68, y: 15, w: 30, h: 10, label: 'ranges 3+ — chunks only', sub: 'offset and length, per projected column', color: '#3EF2A4' },
+        { id: 'lvfile', x: 2, y: 29, w: 22, h: 10, label: 'file', sub: 'rows, schema, 0 stats', color: '#94A3B8' },
+        { id: 'lvrg', x: 27, y: 29, w: 22, h: 10, label: 'row group', sub: '16 here, 8,192 rows each', color: '#94A3B8' },
+        { id: 'lvchunk', x: 52, y: 29, w: 22, h: 10, label: 'column chunk', sub: 'contiguous · min/max/nulls', color: '#A3E635' },
+        { id: 'lvpage', x: 77, y: 29, w: 21, h: 10, label: 'page', sub: 'offsets only', color: '#94A3B8' },
+        { id: 'grid', x: 2, y: 43, w: 46, h: 10, label: 'entries = row groups × leaf columns', sub: '4 … 2,112 across the eight files, exactly', color: '#FBBF24' },
+        { id: 'cost', x: 52, y: 43, w: 46, h: 10, label: 'footer share 0.024% → 16.36%', sub: 'and 404 B/entry when the key is 160 chars', color: '#FB7185' },
+        { id: 'fold', x: 2, y: 57, w: 96, h: 9, label: 'and there are no file-level statistics: a file-level bound is FOLDED from the chunk entries', sub: 'which is simultaneously why the entries exist and why there are so many of them', color: '#A78BFA' },
+      ],
+      edges: [
+        { from: 'tail', to: 'req1' },
+        { from: 'req1', to: 'req2' },
+        { from: 'req2', to: 'req3' },
+        { from: 'req2', to: 'lvfile' },
+        { from: 'lvfile', to: 'lvrg' },
+        { from: 'lvrg', to: 'lvchunk' },
+        { from: 'lvchunk', to: 'lvpage' },
+        { from: 'lvrg', to: 'grid' },
+        { from: 'lvchunk', to: 'cost' },
+        { from: 'grid', to: 'fold' },
+        { from: 'cost', to: 'fold' },
+      ],
+      steps: [
+        {
+          caption:
+            'A writer streaming rows cannot know where the chunks landed until it has written them, so the offsets are recorded afterwards and the length of that record is the last four bytes before the trailing magic.',
+          active: ['tail'],
+        },
+        {
+          caption:
+            'So every reader opens the same way: one small range at the very end for the magic and the length, then one range for exactly the footer it just learned the size of. No value has been decoded yet.',
+          active: ['req1', 'req2'],
+          edges: ['tail->req1', 'req1->req2'],
+        },
+        {
+          caption:
+            'Only then does the reader know what the file holds — and it fetches contiguous byte ranges for the column chunks it actually wants, which is the entire mechanism behind C0.L1\'s bytes-scanned result.',
+          active: ['req3'],
+          edges: ['req2->req3'],
+        },
+        {
+          caption:
+            'The footer describes four nesting levels but sees only three of them: file, row group and column chunk carry real metadata, while the page level appears purely as offsets because page headers are serialised inline with the data.',
+          active: ['lvfile', 'lvrg', 'lvchunk', 'lvpage'],
+          edges: ['req2->lvfile', 'lvfile->lvrg', 'lvrg->lvchunk', 'lvchunk->lvpage'],
+        },
+        {
+          caption:
+            'The bill for that description is the product of two dials, and it has two independent drivers: how many entries there are, and how many bytes each entry spends quoting actual minimum and maximum values.',
+          active: ['grid', 'cost'],
+          edges: ['lvrg->grid', 'lvchunk->cost'],
+        },
+        {
+          caption:
+            'And the reason the grid is so large at all: Parquet defines no file-level statistics, so a planner asking whether a whole file could match has to fold the per-chunk entries itself and cannot read a single answer.',
+          active: ['fold'],
+          edges: ['grid->fold', 'cost->fold'],
+        },
+      ],
+    },
+    {
+      type: 'statline',
+      stats: [
+        {
+          value: '8 bytes',
+          label: 'the fixed entry point of every Parquet file',
+          hint: 'A 4-byte little-endian footer length followed by the PAR1 magic. Every other position in the file is learned rather than known.',
+        },
+        {
+          value: '0.024% → 16.36%',
+          label: 'footer share, 4 columns/1 row group vs 33 columns/64 row groups',
+          hint: 'Measured on real DuckDB runs of the parquet-anatomy lab over the same 131,072 rows. The relationship is asserted by the test suite; the exact figures are version-dependent.',
+        },
+        {
+          value: '2,112',
+          label: 'statistics entries in one file at 33 columns × 64 row groups',
+          hint: 'The entry count is exactly row groups × leaf columns — the format\'s grain, not an estimate. Four entries is the other end of the same sweep.',
+        },
+        {
+          value: '404 B vs 87 B',
+          label: 'footer bytes per entry, 160-character key vs the reference file',
+          hint: 'Fewer columns, same row-group size. Statistics quote actual values, so a wide key inflates every entry in the file — the argument against long string sort keys.',
+        },
+      ],
+    },
+    {
+      type: 'callout',
+      variant: 'warning',
+      title: 'the entry grid is a product, and both dials belong to somebody else',
+      md: `\`entries = row groups × leaf columns\` looks harmless until you notice who turns each dial. Row-group size is set by whoever configured the writer. Column count is set by whoever last added a field to the event schema, usually without opening this file. The product is nobody's number — the same ownership gap C2.L5 found in the file count.
+
+Two consequences worth saying out loud in a review:
+
+- **Adding twenty columns to a wide table multiplies the footer of every file the loader writes from then on**, including the files nothing queries. Schema growth is a metadata decision, not only a storage one.
+- **The footer is paid on open, by every reader, on every query** — including queries that go on to read the whole table anyway. It is not amortised over the scan; it is the toll before the scan.
+
+The falsifiable claim the lab is built around is *"everything a scan needs to skip work is in the metadata, and metadata is not free."* Both halves can lose. If you can find a configuration in the sweep where the entry count is not the product, or where the footer share falls as row groups shrink, the lesson is wrong and the lab will say so.`,
+    },
+    {
+      type: 'callout',
+      variant: 'segfault',
+      title: 'a partially uploaded Parquet file is unreadable, not partly readable',
+      md: `The tail is the entry point, so a file whose upload died at 90% has no entry point. Not a truncated result — **no result**. The spec says it plainly: *if the file metadata is corrupt, the file is lost.*
+
+The anatomy lab performs this on real bytes: remove the last eight and the engine answers with its own message, surfaced verbatim rather than authored by the lesson —
+
+\`\`\`text
+Invalid Input Error: No magic bytes found at end of file
+\`\`\`
+
+Three operational consequences fall out of that one sentence.
+
+- **Never let a reader see a partially written file.** Write to a temporary name and make the final name appear atomically, or land the file outside the table's file list and only add it on commit. This is one of the reasons C3.L3's tree of files exists at all.
+- **Copying a Parquet file with anything that can truncate silently is a data-loss path**, and it fails at read time rather than at copy time.
+- **A file cut short at the front or middle behaves differently from one cut at the end**, which is C3.L2's subject — and the difference is much worse than it sounds.`,
+    },
+    {
+      type: 'isomorphism',
+      title: 'a footer at the end ≡ three formats you have already debugged',
+      pairs: [
+        {
+          os: 'a ZIP central directory',
+          osLine:
+            'The index sits at the end of the archive with a locator behind it, because the compressor cannot know member offsets until it has written them. Tools read backwards; a truncated archive is unopenable.',
+          llm: 'the Parquet footer',
+          llmLine:
+            'Same constraint, same solution, same failure mode — the trailing eight bytes are the locator, and losing them loses the file rather than the last row group.',
+        },
+        {
+          os: 'a filesystem superblock and inode table',
+          osLine:
+            'Fixed metadata that must be read before any file content can be located, and whose size grows with the number of objects rather than with the bytes stored.',
+          llm: 'the entry grid in the footer',
+          llmLine:
+            'row groups × columns entries, parsed before any data byte is fetched. On a wide table in small row groups it is 16.36% of the file, which is a metadata-to-data ratio a filesystem engineer would refuse to ship.',
+        },
+        {
+          os: 'an HTTP range request against a static asset',
+          osLine:
+            'One small request to learn the layout, then exact ranges for the parts you want. The saving is real only if you can name the ranges before fetching them.',
+          llm: 'projection over column chunks',
+          llmLine:
+            'The footer names the ranges, chunks are contiguous, so three of forty columns is three ranges per row group. forge lab 04 grades this as a count of bytes you touched — not as a duration.',
+        },
+      ],
+    },
+    {
+      type: 'quiz',
+      questions: [
+        {
+          q: 'An ingest job uploads Parquet files directly into the table\'s data directory. One upload is killed at 90%. Queries begin failing with "No magic bytes found at end of file". What is the correct read of this situation?',
+          options: [
+            'The file is 90% readable, so the fix is a reader that tolerates a missing footer and recovers the row groups it can find',
+            'Parquet\'s metadata is at the end, so a file without its tail has no entry point at all and is lost, not truncated — the fix is upstream: write to a temporary name and publish atomically, or never add the file to the table\'s file list until it is complete',
+            'The magic bytes are only a version marker, so the file can be repaired by appending PAR1',
+            'Row-group size is too large, so the writer buffered too much before flushing; smaller row groups would have made the file partially readable',
+          ],
+          correct: [1],
+          explanation:
+            'A reader learns every offset in the file from the footer, and it learns where the footer is from the last eight bytes. Remove them and there is nothing to parse — the specification states that if the file metadata is corrupt the file is lost, and the engine\'s own error is exactly that. Appending PAR1 does not help: the four bytes before it must be a footer length that points at a serialised structure which was never written. Smaller row groups genuinely do limit the blast radius of *data* corruption, but they do not create a second copy of the footer, so a truncated tail is fatal at any row-group size. The real fix is publication atomicity, which is the argument C3.L3 builds the whole tree of files on.',
+        },
+        {
+          q: 'A wide event table (33 columns) is written by a streaming loader in 2,048-row groups. Storage has grown faster than the row count, and a measurement shows the footer is 16.36% of a typical file. Which explanation is correct, and what do you change?',
+          options: [
+            'Compression is failing on the metadata; enabling zstd on the footer would recover most of it',
+            'Statistics entries scale as row groups × leaf columns, so 33 × 64 = 2,112 entries per file, while highly compressible enum columns shrink the data side — the footer share is the ratio of two things moving in opposite directions. Raise the row-group size (and the batch interval that forced it down), or drop columns nobody queries',
+            'The statistics are corrupt and need recollecting, which will shrink them back to a normal size',
+            'This is expected for wide tables and cannot be changed, since every column must carry statistics',
+          ],
+          correct: [1],
+          explanation:
+            'Two dials multiply, and the denominator is shrinking at the same time: 64 row groups times 33 leaf columns is 2,112 entries, each one quoting real minimum and maximum values, against a data side made of long runs of enum values that compress to almost nothing. That is why this corner exists at all, and both roads into it — streaming ingest producing small groups, and wide tables — are ordinary rather than pathological. The footer is Thrift-encoded metadata, not a compressible payload you can re-codec, and the statistics are freshly written and correct: they are simply numerous. The levers are the row-group size, the commit interval that drove it down (C2.L5), and the column count nobody owns.',
+        },
+        {
+          q: 'A planner needs to know whether a 200-file table could contain rows with order_ts in a one-day window. A colleague proposes reading each file\'s file-level min and max for order_ts. What is wrong with the plan?',
+          options: [
+            'Nothing — every Parquet file records a file-level min and max per column in its footer',
+            'Parquet defines no file-level statistics: the min/max/null-count triple lives on the column chunk, one per column per row group, so a file-level bound must be folded from those entries — and the folded result is a bound, not a value present in the file',
+            'It works but is slow, so the file names should encode the date range instead',
+            'File-level statistics exist but are optional, so the planner should fall back to reading the data when they are missing',
+          ],
+          correct: [1],
+          explanation:
+            'The grain is the column chunk. The parquet-anatomy lab proves it by counting — entries come out at exactly row groups × leaf columns in every configuration — and by folding the chunk entries and checking the result against the true extremes read from the data. Two practical consequences: the fold is work the planner does per file rather than a value it reads, and the folded result is only a *bound*, so treating a min as a value that exists in the file is the mistake C2.L1 priced (writers may legally record looser bounds, which is why the format carries is_min_value_exact flags). Encoding dates in file names is a real technique, but it is partitioning — C2.L2 — and it answers a different question than statistics do.',
+        },
+      ],
+    },
+    {
+      type: 'deepdive',
+      title: 'going deeper: read the format, then read a reader',
+      md: `**Read \`parquet.thrift\` directly.** It is about 1,500 lines and it settles most arguments: \`FileMetaData\`, \`RowGroup\`, \`ColumnChunk\`, \`ColumnMetaData\`, \`Statistics\`, \`PageHeader\`, \`ColumnIndex\` and \`OffsetIndex\`. Pay attention to which fields are \`optional\` — that word is the entire subject of the next lesson. The \`README.md\` beside it is the prose half, and its "Error recovery" and "Configurations" sections are two pages that will change how you size files.
+
+**Then read a real reader.** \`arrow-rs\`'s \`SerializedFileReader\` and \`ParquetMetaDataReader\` are the reference for the sequence this lesson describes, including the speculative-tail optimisation that forge lab 04 deliberately omits. \`parquet-mr\`'s \`ParquetFileReader\` is the older Java lineage and is worth a skim for how much of it is footer plumbing. The Rust and C++ implementations diverge most in how they schedule chunk reads over object storage — coalescing adjacent ranges, bounding request counts — which is exactly the tradeoff C6 revisits when the bill moves to the network.
+
+**\`PageIndex.md\`** in parquet-format explains the \`ColumnIndex\`/\`OffsetIndex\` pair and, more usefully, the reasoning for adding it: per-page bounds plus a \`boundary_order\` flag let a reader binary-search the pages of a sorted column instead of scanning bounds. That is the level below the row group, and it is why "sorted on the predicate column" pays twice.
+
+For the ancestry of putting columns inside a page-sized unit rather than splitting a table into per-column files, **Ailamaki et al., "Weaving Relations for Cache Performance" (VLDB 2001)** — PAX — is the original argument, and **Melnik et al., "Dremel" (VLDB 2010)** is where the nested-column shredding that Parquet inherited comes from. **ORC** makes the same four-level decomposition with different bets: stripes, a stripe footer, and a built-in row index with an entry every 10,000 rows by default. Comparing the two formats' footers side by side is the fastest way to see which parts of Parquet are physics and which are choices.
+
+**→ tablespace T0.L2** for the random-versus-sequential cost model that makes a contiguous column chunk worth caring about, and **→ tablespace T7.L1** for the row store's view of the same decomposition.
+
+Next: **C3.L2**, where the footer is authoritative about layout and silent about truth. Three of four corruptions are refused loudly; the fourth returns 131,072 rows and a wrong answer.`,
+    },
+  ],
+}
+
+export default lesson

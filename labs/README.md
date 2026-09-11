@@ -53,7 +53,7 @@ A `todo!()` left in your code makes the module trap — the site shows
 | 01 | `encodings/` | C1 | four codecs — dictionary, RLE, bit-packing, frame-of-reference — that round-trip byte-exact and never expand past their header bound |
 | 02 | `zone-maps/` | C2 | block statistics and a pruning planner, graded on **zero false negatives** under every predicate shape |
 | 03 | `vectorized/` | C4 | selection vectors, a batched filter and a hash aggregate — plus the execute-on-compressed path that must agree with decoding first |
-| 04 | `parquet-reader/` | C3 | a real Parquet footer parser and column-chunk reader: projection touches only the chunks you asked for, malformed input is refused |
+| 04 | `parquet-reader/` | C3 | a footer parser and column-chunk reader over **KSPQ**, a Parquet-*shaped* teaching format the harness generates (not Parquet itself — the omissions are listed in the template): projection touches only the chunks you asked for, malformed input is refused |
 | 05 | `merge-on-read/` | C5 | a delta store, a merge and a compaction policy, graded on read- and write-amplification bands |
 | 06 | `shuffle/` | C6 | a partitioned hash join with skew handling: bytes moved in band, no partition allowed to run away with the job |
 
