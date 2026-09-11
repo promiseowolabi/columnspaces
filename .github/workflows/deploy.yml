@@ -3,9 +3,11 @@ name: Deploy to GitHub Pages
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 
 permissions:
+  contents: read
   pages: write
   id-token: write
 
@@ -14,6 +16,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # ---------------------------------------------------------------------------
+  # The site. `npm run verify` is the same gate used locally: lint, typecheck
+  # (src AND tests AND scripts — tsc -b alone only covers src), production
+  # build, then the suite. Nothing here is CI-specific, so a green CI run means
+  # the same thing a green local run means.
+  # ---------------------------------------------------------------------------
   build:
     runs-on: ubuntu-latest
     steps:
@@ -21,31 +29,104 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - run: npm ci
-      - run: npm run lint
+
+      - name: lint
+        run: npm run lint
+
+      - name: typecheck (src, tests, scripts)
+        run: npm run typecheck
 
       # Project site: served from /columnspaces/, so the bundle and the router
-      # basename must both know it. vite.config.ts reads VITE_BASE and
-      # main.tsx passes import.meta.env.BASE_URL to the router.
-      - run: npm run build
+      # basename must both know it. vite.config.ts reads VITE_BASE and main.tsx
+      # passes import.meta.env.BASE_URL to the router basename.
+      - name: build
+        run: npm run build
         env:
           VITE_BASE: /columnspaces/
 
-      - run: npm run test
+      # Runs after the build on purpose: tests/bundle.test.ts inspects dist/ to
+      # assert duckdb stays behind a dynamic import and first paint stays small.
+      - name: test
+        run: npm run test
 
-      # SPA fallback: GitHub Pages serves 404.html for unknown paths and
-      # React Router takes over from there.
+      - name: report build state
+        run: npm run report
+
+      # SPA fallback: GitHub Pages serves 404.html for unknown paths and React
+      # Router takes over from there.
       - run: cp dist/index.html dist/404.html
 
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
 
+  # ---------------------------------------------------------------------------
+  # The forge labs. CI cannot verify the SOLUTIONS — labs/_solutions/ is
+  # gitignored by design, because shipping reference answers next to the
+  # templates would defeat the exercise. What CI can and must verify is the
+  # student-facing contract:
+  #   · the template COMPILES (a template that does not build is not a lab)
+  #   · the template is RED (todo!() must actually fail, or grading is theatre)
+  #   · the wasm artifact builds and exports the ABI the browser calls
+  #   · the zips pack templates only
+  # ---------------------------------------------------------------------------
+  labs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install the wasm target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: template compiles
+        working-directory: labs
+        run: cargo build --workspace
+
+      # Two steps, not one: compiling the tests and running them must be
+      # distinguished, or a template that fails to BUILD would be indistinguishable
+      # from a template that correctly fails its checks.
+      - name: test harness compiles
+        working-directory: labs
+        run: cargo test --workspace --no-run
+
+      - name: template is red (todo!() must fail)
+        working-directory: labs
+        run: |
+          if cargo test --workspace 2>/dev/null; then
+            echo "::error::the lab templates PASS their own checks — the todo!() bodies have been filled in, so grading proves nothing"
+            exit 1
+          fi
+          echo "templates are red, as designed"
+
+      - name: wasm builds and exports the ABI
+        working-directory: labs
+        run: |
+          cargo build --release --target wasm32-unknown-unknown --workspace
+          for f in target/wasm32-unknown-unknown/release/*.wasm; do
+            for sym in ks_run ks_alloc ks_free; do
+              grep -q "$sym" "$f" || { echo "::error::$f is missing the $sym export"; exit 1; }
+            done
+            echo "$f exports the full ABI"
+          done
+
+      - name: zips ship templates only
+        run: |
+          python3 scripts/pack-labs.py || true
+          for z in public/labs/*.zip; do
+            if unzip -l "$z" | grep -qE "_solutions|/target/"; then
+              echo "::error::$z contains reference solutions or build output"
+              exit 1
+            fi
+          done
+          echo "all zips are template-only"
+
   deploy:
-    needs: build
+    needs: [build, labs]
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
