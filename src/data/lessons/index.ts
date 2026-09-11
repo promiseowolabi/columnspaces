@@ -30,10 +30,18 @@ import c1l3 from './c1/bit-packing-and-frame-of-reference'
 import c1l4 from './c1/nulls-strings-and-the-floor'
 import c1l5 from './c1/compute-without-decoding'
 
+// C2 — Layout & Pruning
+import c2l1 from './c2/row-groups-and-statistics'
+import c2l2 from './c2/sort-keys-versus-partition-keys'
+import c2l3 from './c2/clustering-depth'
+import c2l4 from './c2/bloom-filters-and-exact-answers'
+import c2l5 from './c2/the-small-file-problem'
+import c2l6 from './c2/the-pruning-promise'
+
 export const LESSONS_BY_TRACK: Record<TrackId, Lesson[]> = {
   c0: [c0l1, c0l2, c0l3, c0l4, c0l5],
   c1: [c1l1, c1l2, c1l3, c1l4, c1l5],
-  c2: [],
+  c2: [c2l1, c2l2, c2l3, c2l4, c2l5, c2l6],
   c3: [],
   c4: [],
   c5: [],

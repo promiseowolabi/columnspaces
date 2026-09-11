@@ -28,6 +28,7 @@ import { Database } from 'lucide-react'
 import { duckLabMeta } from '@/data/duck-labs'
 import CodecBenchLab from './CodecBenchLab'
 import ScanBillLab from './ScanBillLab'
+import PruningLab from './PruningLab'
 
 /**
  * The registry. Populated as each lab lands (phase 2 onward, PLAN.md).
@@ -36,6 +37,7 @@ import ScanBillLab from './ScanBillLab'
  */
 const REGISTRY: Record<string, (p: { trackColor: string }) => ReactNode> = {
   'scan-bill': ScanBillLab,
+  'pruning-lab': PruningLab,
   'codec-bench': CodecBenchLab,
 }
 

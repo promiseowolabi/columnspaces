@@ -1,0 +1,342 @@
+import type { Lesson } from '../types'
+
+const lesson: Lesson = {
+  id: 'c2.l3',
+  slug: 'clustering-depth',
+  trackId: 'c2',
+  index: 3,
+  title: 'Clustering Depth',
+  minutes: 17,
+  hook: 'Depth went from 1 to 9 twelve hours before the invoice did, and the row groups read went from 180 to 1,620. Same factor, half a day earlier, computable from metadata without reading a single row.',
+  exercise: 'quiz',
+  artifact: 'layout-design',
+  takeaway: {
+    number: 'depth 1 → 9',
+    claim:
+      'Clustering depth is the number of blocks a typical value overlaps, it multiplies the blocks a query reads by exactly that factor, and it is computable from footers alone — which makes it the leading indicator the bill is the lagging version of.',
+  },
+  blocks: [
+    {
+      type: 'prose',
+      md: `Everything in C2 so far has been a design-time decision: how big a row group is, what the partition key cuts, which column leads the sort key. This lesson is the run-time counterpart — the single number that tells you whether those decisions are still true today, and it is not the pruning ratio and not the bill.
+
+**Clustering depth, for a column: how many blocks a typical value's range overlaps.**
+
+- **Depth 1** means the blocks are disjoint on that column. Block 3 ends where block 4 begins, a point predicate lands in exactly one block, and pruning is at its arithmetic maximum.
+- **Depth 9** means a typical value sits inside the min/max range of nine different blocks. Nine blocks get read where one would have done, and your scan is nine times what the design assumed.
+
+The reason this is the metric rather than a metric is that it stands in a **multiplicative** relationship to the thing you are billed for:
+
+\`\`\`
+blocks read  ≈  depth  ×  blocks a disjoint layout would have read
+\`\`\`
+
+Which is why the numbers in Column Week's first incident line up the way they do. \`pruning-collapse\` reports row groups read going from 180 to 1,620 — **exactly 9×** — pruning falling from 89% to 11%, row count up the usual 3%, and \`event_time\` clustering depth moving from 1 to 9. The depth is not a proxy for the damage. It *is* the damage, expressed as a count you can compute before the money arrives.`,
+    },
+    {
+      type: 'prose',
+      md: `## Measuring it, two ways, from metadata only
+
+The property that makes depth operationally useful is that it needs **no data read at all.** Every input is in the footers you already fetch on every query.
+
+**The exact version, for a predicate you care about.** Depth at a window is just the count of blocks the planner will not be able to exclude. So you can compute the planner's decision yourself:
+
+- count the row groups whose \`max >= window_lo\` and \`min <= window_hi\`
+
+That number is precisely how many blocks the scan will read, and comparing it against the number a perfectly clustered table would read (roughly \`window_width ÷ block_width\`, at least 1) gives you the factor you are paying.
+
+**The average version, for a dashboard.** For a point predicate drawn uniformly from the column's range, the expected number of overlapping blocks is the sum of the per-block range widths divided by the total range:
+
+\`\`\`
+avg_depth  =  Σ (max_i - min_i)  ÷  (global max - global min)
+\`\`\`
+
+That falls out directly: each block contributes its own width to the chance of covering a random point. A perfectly clustered column has block ranges that tile the domain end to end, so the sum equals the whole range and the answer is 1. A shuffled column has every block spanning nearly the whole domain, so the sum is about *n* times the range and the answer is *n* — the block count. One SQL query over the footer, one number, no scan.
+
+Both versions are counts, which is the point: a count means the same thing on your laptop, in CI, and in the browser. It is comparable across tables, across engines and across weeks, and it does not move when somebody resizes the cluster.`,
+    },
+    {
+      type: 'code',
+      filename: 'clustering depth from footers, no rows read',
+      lang: 'sql',
+      chips: ['metadata only', 'a count, not a clock', 'this is the planner\'s own decision'],
+      code: `-- 1. THE EXACT VERSION: how many row groups will this window actually read?
+--    This IS the planner's decision, re-derived from the same statistics it uses.
+SELECT count(DISTINCT row_group_id) AS groups_touched
+FROM parquet_metadata('events.parquet')
+WHERE path_in_schema = 'event_time'
+  AND (stats_min_value IS NULL OR stats_max_value IS NULL   -- no proof -> read it
+       OR NOT (stats_max_value < '2026-03-01 00:00:00'
+               OR stats_min_value > '2026-03-07 23:59:59'));
+
+-- 2. THE AVERAGE VERSION: one number for a dashboard.
+--    avg_depth = sum of per-group range widths / the whole column's range.
+--    1.0 = disjoint blocks (maximal pruning). n = every block spans everything.
+WITH g AS (
+  SELECT row_group_id,
+         min(stats_min_value::TIMESTAMP) AS lo,
+         max(stats_max_value::TIMESTAMP) AS hi
+  FROM parquet_metadata('events.parquet')
+  WHERE path_in_schema = 'event_time'
+  GROUP BY row_group_id
+),
+span AS (SELECT min(lo) AS t0, max(hi) AS t1, count(*) AS groups FROM g)
+SELECT
+  span.groups                                                   AS row_groups,
+  sum(epoch(g.hi) - epoch(g.lo))
+    / nullif(epoch(span.t1) - epoch(span.t0), 0)                 AS avg_depth
+FROM g, span
+GROUP BY span.groups, span.t0, span.t1;
+
+-- what to alert on: avg_depth on the sort key, per partition, per table.
+--   depth <= 2     the layout is doing its job
+--   depth >  4     a rewrite is due; the bill has not moved yet
+--   depth ~ groups clustering is gone entirely — check the writer, not the query`,
+    },
+    {
+      type: 'prose',
+      md: `## What forge lab 02 does with the same knob
+
+Lab 02's corpus is built around this number, and it is worth seeing how directly. The harness has one function that generates its layouts:
+
+\`\`\`
+shuffle_within(rng, col, group)   // shuffle inside windows of \`group\` rows
+\`\`\`
+
+Its own comment says what the parameter is: *"With \`group == rows_per_block\` nothing changes; with \`group == the whole table\` every block spans the whole range and pruning is impossible. This one knob is clustering depth."* So the corpus contains layouts literally named \`clustered ts (depth 1)\`, \`shuffled ts (depth N)\` and \`ts at clustering depth 4\` — the realistic middle, which is where real tables live and where a binary "is pruning working?" question has no useful answer.
+
+Then \`prunes_target\` rebuilds C0.L4's measurement at scale: the same 4,096 rows in two physical orders, 64 blocks, 40 selective windows, so 2,560 block decisions per layout. Its pass message reports both sides:
+
+- **clustered: 69 of 2,560 blocks read — 97.3% pruned**
+- **shuffled: 2,149 of 2,560 blocks read — 16.0% pruned**
+- **31.1× the rows for an identical answer, from write order alone**
+
+Two details in there are worth more than the headline. First, the shuffled layout still prunes 16%, because one predicate in eight is deliberately drawn outside the column's global range — a predicate that no block can satisfy prunes everything regardless of depth, which is why a *fleet-wide* pruning-ratio dashboard can look acceptable while the queries that matter read everything. Depth does not have that failure mode; it is a property of the layout, not of the predicate mix.
+
+Second, \`prunes_target\` is graded as a **band with a floor as well as a ceiling** — the ceiling is the reference planner plus 20% plus slack — while \`no_false_negatives\` is pass/fail with zero tolerance. That asymmetry is the whole subject: depth costs you money, and skipping a block you could not prove impossible costs you correctness. The harness will also fail a skip that happened to be *lucky*: **"a skip that is not backed by a proof is a false negative waiting for different data."**`,
+    },
+    {
+      type: 'diagram',
+      caption: 'fig 1 — one predicate, three depths, and the multiplication that follows',
+      height: 70,
+      nodes: [
+        { id: 'pred', x: 24, y: 2, w: 52, h: 8, label: "WHERE event_time IN one day", sub: 'the same predicate against three layouts of the same rows', color: '#A3E635' },
+        { id: 'd1a', x: 2, y: 16, w: 17, h: 9, label: 'blk 0', sub: 'Jan', color: '#3EF2A4' },
+        { id: 'd1b', x: 21, y: 16, w: 17, h: 9, label: 'blk 1', sub: 'Feb', color: '#3EF2A4' },
+        { id: 'd1c', x: 40, y: 16, w: 17, h: 9, label: 'blk 2', sub: 'Mar', color: '#3EF2A4' },
+        { id: 'd1d', x: 59, y: 16, w: 17, h: 9, label: 'blk 3', sub: 'Apr', color: '#3EF2A4' },
+        { id: 'd1r', x: 78, y: 16, w: 20, h: 9, label: 'depth 1', sub: '1 block read', color: '#3EF2A4' },
+        { id: 'd4a', x: 2, y: 30, w: 17, h: 9, label: 'blk 0', sub: 'Jan–Apr', color: '#FBBF24' },
+        { id: 'd4b', x: 21, y: 30, w: 17, h: 9, label: 'blk 1', sub: 'Jan–Apr', color: '#FBBF24' },
+        { id: 'd4c', x: 40, y: 30, w: 17, h: 9, label: 'blk 2', sub: 'Jan–Apr', color: '#FBBF24' },
+        { id: 'd4d', x: 59, y: 30, w: 17, h: 9, label: 'blk 3', sub: 'Jan–Apr', color: '#FBBF24' },
+        { id: 'd4r', x: 78, y: 30, w: 20, h: 9, label: 'depth 4', sub: '4 blocks read', color: '#FBBF24' },
+        { id: 'd9a', x: 2, y: 44, w: 17, h: 9, label: 'blk 0', sub: 'all year', color: '#FB7185' },
+        { id: 'd9b', x: 21, y: 44, w: 17, h: 9, label: 'blk 1', sub: 'all year', color: '#FB7185' },
+        { id: 'd9c', x: 40, y: 44, w: 17, h: 9, label: '… 6 more', sub: 'all year', color: '#FB7185' },
+        { id: 'd9d', x: 59, y: 44, w: 17, h: 9, label: 'blk 8', sub: 'all year', color: '#FB7185' },
+        { id: 'd9r', x: 78, y: 44, w: 20, h: 9, label: 'depth 9', sub: '9 blocks read', color: '#FB7185' },
+        { id: 'note', x: 2, y: 58, w: 96, h: 9, label: 'blocks read ≈ depth × blocks a disjoint layout reads', sub: 'the incident: 180 → 1,620 row groups, 89% → 11% pruned, and depth moved 12 hours earlier', color: '#A78BFA' },
+      ],
+      edges: [
+        { from: 'pred', to: 'd1a' },
+        { from: 'pred', to: 'd4a' },
+        { from: 'pred', to: 'd9a' },
+        { from: 'd1d', to: 'd1r' },
+        { from: 'd4d', to: 'd4r' },
+        { from: 'd9d', to: 'd9r' },
+        { from: 'd9r', to: 'note' },
+        { from: 'd1r', to: 'note' },
+      ],
+      steps: [
+        {
+          caption:
+            'One predicate — a single day out of a year — issued against three layouts holding byte-identical rows. Nothing about the query, the format, the codec or the row-group size differs between them.',
+          active: ['pred'],
+        },
+        {
+          caption:
+            'Depth 1: the blocks are disjoint on event_time, so each covers a distinct slice of history and a one-day predicate lands inside exactly one of them. This is the arithmetic maximum for pruning, and the layout was designed to be here.',
+          active: ['d1a', 'd1b', 'd1c', 'd1d', 'd1r'],
+          edges: ['pred->d1a', 'd1d->d1r'],
+        },
+        {
+          caption:
+            'Depth 4: each block now spans four months, so any one day overlaps four of them. Nothing is broken, no error is raised, and the statistics are entirely accurate — the scan simply reads four times the blocks for the same answer.',
+          active: ['d4a', 'd4b', 'd4c', 'd4d', 'd4r'],
+          edges: ['pred->d4a', 'd4d->d4r'],
+        },
+        {
+          caption:
+            'Depth 9: every block spans nearly the whole year, so every block might contain a match and none can be excluded. This is what an upstream writer dropping its ORDER BY looks like from inside the footer — correct metadata carrying no information.',
+          active: ['d9a', 'd9b', 'd9c', 'd9d', 'd9r'],
+          edges: ['pred->d9a', 'd9d->d9r'],
+        },
+        {
+          caption:
+            'And the relationship is multiplicative, which is why the incident telemetry lines up: row groups read moved 180 → 1,620, exactly the factor depth moved by, while latency stayed flat because a wide engine absorbs the bytes. Depth crossed first, by about half a day.',
+          active: ['note'],
+          edges: ['d9r->note', 'd1r->note'],
+        },
+      ],
+    },
+    {
+      type: 'statline',
+      stats: [
+        {
+          value: '97.3% → 16.0%',
+          label: 'blocks pruned, clustered vs shuffled (lab 02)',
+          hint: 'The prunes_target check: 69 of 2,560 block decisions read on the clustered layout, 2,149 on the same rows written shuffled. 40 selective predicates over 64 blocks.',
+        },
+        {
+          value: '31.1×',
+          label: 'the rows read for an identical answer',
+          hint: 'Reported by lab 02 from write order alone. Same values, same predicates, same block size — only the physical order differs.',
+        },
+        {
+          value: '9×',
+          label: 'row groups read when depth went 1 → 9',
+          hint: 'Column Week INC-1: 180 → 1,620 row groups read, pruning 89% → 11%, rows in the table up only 3%. Blocks read scales with depth.',
+        },
+        {
+          value: '12 hours',
+          label: 'how far depth leads the invoice',
+          hint: 'The drill\'s telemetry: depth moves half a day before the cost signal, and latency never moves at all. That gap is the entire argument for putting it on a dashboard.',
+        },
+      ],
+    },
+    {
+      type: 'vendor',
+      snapshot: '2026-09',
+      title: 'Snowflake exposes this number as a function, and names it the same thing',
+      systems: ['snowflake'],
+      sources: [
+        'https://docs.snowflake.com/en/sql-reference/functions/system_clustering_depth',
+        'https://docs.snowflake.com/en/sql-reference/functions/system_clustering_information',
+      ],
+      md: `The term is not invented here. **Snowflake ships \`SYSTEM$CLUSTERING_DEPTH('<table>', '(<col1>, <col2>…)')\`**, documented as computing "the average depth of the table according to the specified columns (or the clustering key defined for the table)", with two properties stated directly in the docs:
+
+- the average depth of a populated table **is always 1 or more**, and
+- **the smaller the average depth, the better clustered** the table is with respect to those columns.
+
+It takes an optional predicate argument so you can ask for the depth over just the range of values you actually query, and it will compute depth for *any* columns, not only the declared clustering key — which is exactly the diagnostic you want when a query filters on something the layout was not designed for. \`SYSTEM$CLUSTERING_INFORMATION\` returns the fuller picture including an overlap histogram.
+
+The documentation's own examples are worth reading as a shape rather than as measurements — they are Snowflake's illustrative outputs on Snowflake's data, not anything measured here or by you: the same table reports \`2.4865\` on its clustering key, \`23.1351\` on a different two-column pair, and \`11.2452\` on that pair once a predicate narrows the range. That is the "one physical order" constraint quantified by a vendor function: the columns the table is clustered on report a low number and the columns it is not report an order of magnitude more.
+
+The durable architectural point, which outlives any version: the metric is derived from **micro-partition metadata**, so asking for it does not scan the table. If your platform exposes an equivalent, use it; if it does not, the SQL earlier in this lesson computes the same quantity from Parquet footers. What would make a proof-of-concept meaningful here is not the vendor's number on the vendor's table — it is *your* depth on *your* columns, before and after the load pattern you actually run.`,
+    },
+    {
+      type: 'callout',
+      variant: 'warning',
+      title: 'INC-1, and the two mitigations that make it worse',
+      md: `Column Week's first drill (\`pruning-collapse\`) is this lesson as an incident. Daily scan volume goes from 1.2 TB to 3.9 TB overnight. Nothing was deployed, the queries are byte-identical, the schema is unchanged, row counts grew the usual 3%. **The dashboard is as fast as ever** — which is why nobody noticed until the invoice. The cause is an upstream loader that stopped writing in \`event_time\` order, so every row group now spans the whole range.
+
+The correct call includes the monitoring change, not just the rewrite: re-cluster the affected partitions, fix the loader ordering, **and alert on clustering depth, because it moved twelve hours before the invoice did.**
+
+Two of the offered mitigations are the ones a competent engineer proposes in the room, and both are wrong for reasons this track has already established:
+
+- **"Add a bloom filter on event_time so the planner can skip blocks again."** Bloom filters answer equality, not ranges. A seven-day window is a range predicate and a bloom filter has nothing to say about it.
+- **"Add more partitions on event_time to force finer-grained pruning."** Partitioning cuts the file list; the problem is the ordering *inside* the files. You would multiply the file count — see C2.L2's arithmetic — and change nothing about within-file clustering. This is the confusion from the previous lesson, arriving in an incident channel at the worst possible moment.
+
+The third trap — scale up the compute so the larger scan finishes in the same wall-clock time — is the one that makes the symptom disappear while doubling the bill. Cost is a count, never a clock.`,
+    },
+    {
+      type: 'callout',
+      variant: 'info',
+      title: 'depth is per column, and most of your columns are at the floor by design',
+      md: `Compute depth on \`user_id\` for a table sorted by \`event_time\` and you will get something close to the block count. That is not a defect and there is no rewrite that fixes it — a table has one physical order, and every column that is not near the front of the sort key sits at maximum depth by construction. Lab 02's corpus encodes this deliberately: layout family 0 is *"clustered on col0, uncorrelated col1 — one physical order, two predicates, and only one of them prunes."*
+
+So the operational form is not "keep depth low", it is:
+
+- **Measure depth on the columns your recurring predicates name**, which you know from the query log. One number per (table, partition, sort-key column).
+- **Alert on the delta, not the absolute.** Depth 1 → 4 on the sort key is an incident. Depth 60 on a column you never designed for is Tuesday.
+- **Record the expected depth in the layout design** next to the scan budget it justifies. C0.L5's caveat — "this budget assumes clustering holds" — becomes checkable rather than rhetorical the moment there is a number attached to it, and the principal-engineer room grades exactly that kind of falsifiability.`,
+    },
+    {
+      type: 'isomorphism',
+      title: 'clustering depth ≡ three numbers you already watch',
+      pairs: [
+        {
+          os: 'index fragmentation',
+          osLine:
+            'Logical order stops matching physical order, so a range scan that should walk forwards starts hopping. The index is still correct; it has stopped being cheap, and the fix is a rebuild.',
+          llm: 'clustering depth above 1',
+          llmLine:
+            'The same divergence at block granularity, with the same fix (rewrite the data) and the same property: nothing reports an error, the cost simply changes.',
+        },
+        {
+          os: 'max over mean partition size',
+          osLine:
+            'The mean tells you nothing about a skewed job; the maximum is the runtime. Every default dashboard shows the mean.',
+          llm: 'depth over pruning ratio',
+          llmLine:
+            'A fleet-wide pruning ratio can look fine while your expensive queries read everything, because unsatisfiable predicates prune perfectly. Depth is a property of the layout rather than of the predicate mix.',
+        },
+        {
+          os: 'a bloom filter\'s false-positive rate',
+          osLine:
+            'A tunable, monitorable number that predicts wasted lookups exactly, with no correctness consequence — you pay in work, never in wrong answers.',
+          llm: 'depth as a cost multiplier',
+          llmLine:
+            'Depth predicts wasted block reads exactly, and over-reading is likewise only a bill. Its dangerous cousin, skipping a block you could not prove impossible, is the one that returns wrong answers.',
+        },
+      ],
+    },
+    {
+      type: 'quiz',
+      questions: [
+        {
+          q: 'You are asked to add one metric to the platform dashboard to catch pruning regressions before they reach an invoice. Latency, pruning ratio, bytes scanned and clustering depth are all available. Which do you pick, and why do the other three fail?',
+          options: [
+            'Bytes scanned, because it is the quantity you are billed for and therefore the most honest number available',
+            'Clustering depth on the sort key: it is computable from metadata without a scan, it multiplies the blocks read, it moved 12 hours ahead of the cost signal in the drill, and it is a property of the layout rather than of whichever queries happened to run',
+            'Query latency, because it is what users experience and a real regression will always show up there first',
+            'Pruning ratio, since it directly measures the mechanism that is failing',
+          ],
+          correct: [1],
+          explanation:
+            'All four are worth having; the question is which one leads. Latency is the weakest, because a wide engine absorbs the extra bytes — in the drill the dashboard stayed as fast as ever, which is precisely why nobody noticed. Bytes scanned is the truth but it is the lagging indicator, aggregated into a billing period and confounded by data growth and query volume. Pruning ratio is subtler: unsatisfiable predicates prune 100% of blocks, so a fleet average can look healthy while the queries you care about read everything — lab 02 shows a fully shuffled layout still reporting 16% pruned for exactly this reason. Depth is derived from footer statistics alone, is comparable across tables and weeks, moves ahead of the money, and stands in a multiplicative relationship to blocks read: 1 → 9 in depth, 180 → 1,620 row groups.',
+        },
+        {
+          q: 'A column\'s row-group statistics show 200 groups whose individual ranges sum to about 600 days, over a column spanning 730 days of history. What is the average depth, and what does it imply for a one-day predicate?',
+          options: [
+            'Depth is 200, because there are 200 row groups and each must be checked',
+            'Depth is about 0.82 (600 ÷ 730), so the layout is better than disjoint and prunes more than the maximum',
+            'Depth is about 0.82, which is below 1 and therefore means the ranges do not cover the whole domain — some of the history has gaps, and a one-day predicate lands in at most one group, so this layout is at or near the pruning maximum',
+            'Depth cannot be computed without reading the data, since statistics only give bounds rather than distributions',
+          ],
+          correct: [2],
+          explanation:
+            'The estimator is the sum of per-block range widths divided by the total range, because each block contributes its own width to the probability of covering a random point. 600 ÷ 730 ≈ 0.82, and a value below 1 does not mean better-than-disjoint pruning — it means the blocks do not tile the domain, so there are ranges of the column with no data at all (a load gap, a retention boundary, a quiet weekend). For a predicate that lands where data exists, the layout is disjoint and reads one group. The useful discipline here is that depth is a metadata computation: no rows are read, so you can run it on every table every hour, which is what makes it dashboard material rather than an investigation.',
+        },
+        {
+          q: 'Depth on the sort key has drifted from 1 to 4 over six weeks. The bill is up 15%, well within normal growth, and nobody has complained. What is the defensible action?',
+          options: [
+            'Wait until the bill or a latency SLO actually breaches, then investigate — acting on a metric nobody is complaining about is premature optimisation',
+            'Re-cluster the affected partitions now and find the write-path change that caused the drift, because depth 4 already means roughly 4× the blocks read for those predicates and the trend has a known destination — depth equal to the block count, at which point pruning is gone entirely',
+            'Increase the row-group size so each group covers more history and the depth number comes down',
+            'Add a bloom filter on the sort key so the planner has a second mechanism to fall back on',
+          ],
+          correct: [1],
+          explanation:
+            'A leading indicator is only worth having if you act on it while the lagging one still looks acceptable — otherwise you have instrumented an incident rather than prevented one. Depth 4 is already a 4× multiplier on blocks read for the predicates that name that column; the 15% bill movement is small only because it is diluted by everything else in the account, which is exactly how this hides. The trend has a known endpoint (depth approaching the block count, pruning at zero) and a known cause (the write path), and both the rewrite and the upstream fix are cheaper now than during an incident. The third option is worth naming as a trap because it does lower the number: fewer, wider blocks means fewer overlaps to count, while the bytes read go up — you would be gaming the metric and paying for it. Bloom filters answer equality, not the range predicates a sort key exists to serve.',
+        },
+      ],
+    },
+    {
+      type: 'deepdive',
+      title: 'going deeper: overlap as an optimisation objective',
+      md: `Depth is the informal name for a quantity the literature treats as an objective function. **Sun et al., "Fine-grained Partitioning for Aggressive Data Skipping" (SIGMOD 2014)** and **"Skipping-oriented Partitioning for Columnar Layouts" (VLDB 2016)** formalise layout selection as minimising blocks touched over a given query workload — which makes explicit the thing this lesson keeps insisting on: depth is meaningless without saying *on which column*, and the column list comes from your query log rather than from the schema. If you have never priced a layout against an actual workload trace, those two papers are the correction.
+
+For the multi-column case, the space-filling-curve literature is where depth becomes a vector rather than a scalar: **Z-order (Morton) and Hilbert** orderings distribute moderate clustering across several columns instead of concentrating it in one, and the honest way to evaluate one is to compute depth per column before and after. **Delta Lake's** and **Iceberg's** implementations both publish how they choose the curve and the bin boundaries; read those rather than the marketing pages, because the interesting content is in what they do at partition boundaries.
+
+The monitoring argument generalises beyond storage. **"Latency is a lagging indicator of a saturated resource"** is the same claim in a different subject, and the queueing-theory framing — watch utilisation, not response time — is why depth belongs beside cost on a dashboard rather than inside a runbook. If you have done tablespace, **T0.L2** on random versus sequential access is what makes a "block read" a physical quantity rather than an accounting one.
+
+And for the correctness half, which no amount of depth reduction may compromise: **Bloom (1970)** is still the cleanest statement of a one-sided-error data structure, and the reason both mechanisms share the rule that a maybe is never a no. Forge **lab 02** grades that rule with zero tolerance and grades depth in a band, which is the right relative weighting for both.
+
+Next: the remainder of C2 puts a second mechanism next to the zone map — bloom filters, which answer the equality predicates ranges cannot — and then turns the whole track into the layout design the \`layout-desk\` grades and \`the-principal\` attacks.`,
+    },
+  ],
+}
+
+export default lesson

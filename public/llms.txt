@@ -56,7 +56,12 @@ _A column is one type and one domain, and that is exactly what a codec eats. Dic
 
 _Compression makes bytes smaller; layout makes them unread. Row groups, min/max statistics, bloom filters, sort keys versus partition keys — and the arithmetic that tells you whether your clustering will actually prune, or just reorganise the same scan._
 
-
+- [C2.L1 Row Groups and Statistics](https://promiseowolabi.github.io/columnspaces/lessons-md/c2.l1.md): The last refinement of the row-group dial multiplies your footer statistics by four and buys under five points of pruning. Both ends of that dial are traps, and only one of them is famous.
+- [C2.L2 Sort Keys Versus Partition Keys](https://promiseowolabi.github.io/columnspaces/lessons-md/c2.l2.md): A partition key cuts the file list. A sort key cuts the bytes inside the files that survive. Treating them as one decision is the most expensive confusion in this field, and a four-column sort key does not serve four predicates.
+- [C2.L3 Clustering Depth](https://promiseowolabi.github.io/columnspaces/lessons-md/c2.l3.md): Depth went from 1 to 9 twelve hours before the invoice did, and the row groups read went from 180 to 1,620. Same factor, half a day earlier, computable from metadata without reading a single row.
+- [C2.L4 Bloom Filters and Exact Answers](https://promiseowolabi.github.io/columnspaces/lessons-md/c2.l4.md): A min/max pair cannot help an equality predicate on a column nobody sorted by. There are two mechanisms that can, and the one everybody reaches for does nothing at all for a range.
+- [C2.L5 The Small File Problem](https://promiseowolabi.github.io/columnspaces/lessons-md/c2.l5.md): Planning took 61% of query time on a 9 TB table. The data had not grown. There were 1.4 million files where there used to be thirty-five thousand.
+- [C2.L6 The Pruning Promise](https://promiseowolabi.github.io/columnspaces/lessons-md/c2.l6.md): A promised pruning ratio is also a stated downside: promise 99.5% and you have promised a 200× multiplier if physical order stops holding. Say both numbers, or neither is credible.
 
 ### C3 — Table Formats
 

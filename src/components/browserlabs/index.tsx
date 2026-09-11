@@ -15,6 +15,7 @@ import { Check, FlaskConical } from 'lucide-react'
 import { browserLabMeta } from '@/data/browser-labs'
 import { cn } from '@/lib/utils'
 import { useLabCompletion, type LabTask } from './shared'
+import LayoutDesignerLab from './LayoutDesignerLab'
 
 export type { LabTask }
 
@@ -94,7 +95,9 @@ export function LabShell({
  * carrying them here would have made `npm run report` claim 7/7 built while
  * none of them taught anything about columns.
  */
-const REGISTRY: Record<string, (p: { trackColor: string }) => ReactNode> = {}
+const REGISTRY: Record<string, (p: { trackColor: string }) => ReactNode> = {
+  'layout-designer': LayoutDesignerLab,
+}
 
 /** Renders a `lab` content block. Unknown ids render a gentle placeholder. */
 export function BrowserLabView({ lab, trackColor }: { lab: string; trackColor: string }) {
