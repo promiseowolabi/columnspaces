@@ -31,6 +31,7 @@ import ScanBillLab from './ScanBillLab'
 import PruningLab from './PruningLab'
 import ParquetAnatomyLab from './ParquetAnatomyLab'
 import SnapshotLab from './SnapshotLab'
+import SkewLab from './SkewLab'
 
 /**
  * The registry. Populated as each lab lands (phase 2 onward, PLAN.md).
@@ -43,6 +44,7 @@ const REGISTRY: Record<string, (p: { trackColor: string }) => ReactNode> = {
   'codec-bench': CodecBenchLab,
   'parquet-anatomy': ParquetAnatomyLab,
   'snapshot-lab': SnapshotLab,
+  'skew-lab': SkewLab,
 }
 
 export function DuckLabView({ lab, trackColor }: { lab: string; trackColor: string }) {

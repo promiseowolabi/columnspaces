@@ -1,0 +1,16 @@
+[package]
+name = "merge-on-read"
+version = "0.1.0"
+edition = "2021"
+description = "forge lab 05 — a delta store, a merge on the read path, and a compaction policy graded against opposing amplification bands (columnspaces)"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+kslab = { path = "../kit" }
+
+[profile.release]
+opt-level = 2
+debug = false

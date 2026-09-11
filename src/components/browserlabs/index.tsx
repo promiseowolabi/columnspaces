@@ -17,6 +17,8 @@ import { cn } from '@/lib/utils'
 import { useLabCompletion, type LabTask } from './shared'
 import LayoutDesignerLab from './LayoutDesignerLab'
 import BatchMachineLab from './BatchMachineLab'
+import MergePolicyLab from './MergePolicyLab'
+import ShufflePlannerLab from './ShufflePlannerLab'
 
 export type { LabTask }
 
@@ -99,6 +101,8 @@ export function LabShell({
 const REGISTRY: Record<string, (p: { trackColor: string }) => ReactNode> = {
   'layout-designer': LayoutDesignerLab,
   'batch-machine': BatchMachineLab,
+  'merge-policy': MergePolicyLab,
+  'shuffle-planner': ShufflePlannerLab,
 }
 
 /** Renders a `lab` content block. Unknown ids render a gentle placeholder. */

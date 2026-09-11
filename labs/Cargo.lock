@@ -14,7 +14,21 @@ name = "kslab"
 version = "0.1.0"
 
 [[package]]
+name = "merge-on-read"
+version = "0.1.0"
+dependencies = [
+ "kslab",
+]
+
+[[package]]
 name = "parquet-reader"
+version = "0.1.0"
+dependencies = [
+ "kslab",
+]
+
+[[package]]
+name = "shuffle"
 version = "0.1.0"
 dependencies = [
  "kslab",
