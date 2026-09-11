@@ -55,9 +55,11 @@ Now price it under two layouts, using nothing but the arithmetic above.
 
 **Column store, badly laid out.** Projection works immediately: three column files instead of sixty. 2 billion rows × 28 bytes = **56 GB**. That is a **14× reduction from layout alone**, before compression, before pruning, without changing one character of the query. This is the entire content of "just use a column store", and it is real.
 
-**Column store, laid out for this query.** If the table is physically clustered on \`order_ts\`, the seven-day window lives in a small number of contiguous blocks. Block statistics — min and max \`order_ts\` per block — let the engine skip the rest **unread**. Skip 99% of blocks and you read **~560 MB** of the 56 GB. Apply the compression a clustered timestamp and a 200-value region column give you, and the bytes that actually cross the wire land in the **tens of megabytes**.
+**Column store, laid out for this query.** If the table is physically clustered on \`order_ts\`, the seven-day window lives in a small number of contiguous blocks. Block statistics — min and max \`order_ts\` per block — let the engine skip the rest **unread**. Skip 95% of blocks and you read **~2.8 GB** of the 56 GB; skip 99% and you read **~560 MB**. Compression then shrinks whatever survived, by a factor that depends entirely on which columns you kept — C1 measures it, and it is the one factor here you cannot predict from the schema alone.
 
-That is the arc of this course in one example: **800 GB → 56 GB → 560 MB → tens of MB.** Four orders of magnitude, same data, same answer, same SQL.`,
+That is the arc of this course in one example: **800 GB → 56 GB → single-digit GB**, same data, same answer, same SQL. Three orders of magnitude, and not one of the steps was a hardware decision.
+
+The lab below runs exactly this comparison on a real columnar engine, at 1/1000 scale. When I ran it while writing this lesson it reported a **projection factor of 18.7×** and **95% of row groups pruned** — a 685× total — with the identical query reading **39.8× more bytes** once the rows were written in a different order. Your numbers should land near those; if they do not, one of us has learned something.`,
     },
     {
       type: 'statline',
@@ -73,14 +75,14 @@ That is the arc of this course in one example: **800 GB → 56 GB → 560 MB →
           hint: '400 ÷ 28. Before compression, before pruning — this is what the layout gives you for free.',
         },
         {
-          value: '100×',
-          label: 'further reduction from pruning',
-          hint: 'A 1% time window on a table clustered by time. Blocks whose max predates the predicate are never read.',
+          value: '95%',
+          label: 'row groups skipped unread',
+          hint: 'Measured, not assumed: a seven-day window on a table clustered by time, in the lab below. Blocks whose max predates the predicate are never opened.',
         },
         {
-          value: '~1,400×',
-          label: 'the two multiplied together',
-          hint: '14 × 100. Projection and pruning are independent factors, which is why they multiply rather than add.',
+          value: '685×',
+          label: 'the factors multiplied',
+          hint: 'Measured in the lab: 18.7x projection times 20x pruning. They act on different terms of the same product, which is why they multiply rather than add.',
         },
       ],
     },
@@ -104,9 +106,9 @@ So the first question to ask about any analytical workload is not "is it fast" b
         { id: 'q', x: 30, y: 2, w: 40, h: 9, label: 'the query', sub: '3 of 60 cols · 1% of rows', color: '#A3E635' },
         { id: 'row', x: 3, y: 18, w: 21, h: 10, label: 'row store', sub: '~800 GB', color: '#FB7185' },
         { id: 'proj', x: 27, y: 18, w: 21, h: 10, label: '+ projection', sub: '~56 GB', color: '#FBBF24' },
-        { id: 'prune', x: 51, y: 18, w: 21, h: 10, label: '+ pruning', sub: '~560 MB', color: '#3EF2A4' },
-        { id: 'comp', x: 75, y: 18, w: 21, h: 10, label: '+ compression', sub: 'tens of MB', color: '#22D3EE' },
-        { id: 'need', x: 30, y: 38, w: 40, h: 9, label: 'bytes the answer needed', sub: '~560 MB of values', color: '#94A3B8' },
+        { id: 'prune', x: 51, y: 18, w: 21, h: 10, label: '+ pruning', sub: '~2.8 GB', color: '#3EF2A4' },
+        { id: 'comp', x: 75, y: 18, w: 21, h: 10, label: '+ compression', sub: 'column-dependent', color: '#22D3EE' },
+        { id: 'need', x: 30, y: 38, w: 40, h: 9, label: 'bytes the answer needed', sub: '~1% of the rows', color: '#94A3B8' },
         { id: 'waste', x: 3, y: 52, w: 45, h: 9, label: 'the 60 columns you did not ask for', sub: 'layout tax', color: '#FB7185' },
         { id: 'skip', x: 52, y: 52, w: 44, h: 9, label: 'the 99% of rows outside the window', sub: 'pruning tax', color: '#FBBF24' },
       ],
@@ -139,13 +141,13 @@ So the first question to ask about any analytical workload is not "is it fast" b
         },
         {
           caption:
-            'Cluster the table on order_ts and keep min/max per block. Now the predicate can be answered against metadata: a block whose max timestamp predates the window cannot contain a match, so it is skipped unread. ~560 MB — a further 100×, and the two factors multiply because they act on different terms.',
+            'Cluster the table on order_ts and keep min/max per block. Now the predicate can be answered against metadata: a block whose max timestamp predates the window cannot contain a match, so it is skipped unread. The lab below measures 95% skipped — a further 20×, and the two factors multiply because they act on different terms.',
           active: ['prune', 'need'],
           edges: ['proj->prune', 'prune->need'],
         },
         {
           caption:
-            'Encoding shrinks what survives: a clustered timestamp delta-encodes, a 200-value region column dictionary-encodes. Tens of megabytes cross the wire. Same data, same SQL, same answer, roughly four orders of magnitude apart — and every step was a layout decision, not a hardware one.',
+            'Encoding shrinks what survives — but by how much depends on the columns you kept, not on the format. A monotonic timestamp delta-encodes to almost nothing; a high-entropy numeric column barely moves. C1 measures it. Same data, same SQL, same answer, three orders of magnitude apart, and every step was a layout decision rather than a hardware one.',
           active: ['comp'],
           edges: ['prune->comp'],
         },
@@ -247,7 +249,7 @@ Naming those assumptions out loud does not weaken the estimate. It is the differ
         {
           q: 'A table has 2B rows, 60 columns, ~400 B/row (~800 GB). A query projects 3 columns (~28 B/row) and filters to 1% of rows on a column the table is NOT clustered by. Roughly what does a column store read?',
           options: [
-            '~560 MB — projection and the 1% predicate both apply',
+            '~2.8 GB — projection and the 1% predicate both apply',
             '~56 GB — projection applies (3 of 60 columns), but with no clustering on the filter column almost no blocks can be skipped, so all blocks of those columns are read',
             '~800 GB — the predicate forces a full table scan regardless of layout',
             '~8 GB — the engine samples blocks and interpolates',

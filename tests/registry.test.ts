@@ -119,7 +119,9 @@ describe('lesson blocks', () => {
         expect(q.options.length, `${id} options`).toBeGreaterThanOrEqual(2)
         expect(q.correct.length, `${id} single correct answer`).toBe(1)
         expect(q.correct[0]).toBeLessThan(q.options.length)
-        expect(q.explanation.length, `${id} explanation`).toBeGreaterThan(40)
+        /* `explanation` is optional in the shared QuizQuestion type, but this course requires it. */
+        expect(q.explanation, `${id} missing explanation`).toBeDefined()
+        expect(q.explanation!.length, `${id} explanation`).toBeGreaterThan(40)
       }
     }
   })

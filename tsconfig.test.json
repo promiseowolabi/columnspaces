@@ -1,0 +1,17 @@
+{
+  "//": "tsc -b only covers src (tsconfig.app.json). Tests and scripts are real code with real type errors, so they get their own project and npm run typecheck checks both.",
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": [
+      "node",
+      "vite/client",
+      "vitest/globals"
+    ]
+  },
+  "include": [
+    "src",
+    "tests",
+    "scripts"
+  ]
+}

@@ -143,5 +143,24 @@ change one number in a dossier and a different objection must appear.
 
 ## Build state
 
-Phase 1 (fork, registries, contracts). See the RESUME POINT in `PLAN.md` for
-what is done and what is next.
+`npm run report` is authoritative. Current:
+
+- **C0 The Scan Contract is complete** — 5/5 lessons, ending in a scan budget
+  handed to the scan desk.
+- **The empirical tier works.** duckdb-wasm runs in the tab; the `scan-bill` lab
+  measured 18.7× projection, 95% of row groups pruned, and the same query
+  reading 39.8× more bytes once the rows were written in a different order.
+  Those numbers are asserted against a real DuckDB engine in
+  `tests/duckdb-sql.test.ts`, not quoted from memory.
+- **Forge lab 01 `encodings` is gradeable end to end** — template red, solution
+  green, wasm verified headless over the real ABI, zip ships templates only.
+- **The Warehouse v0 runs** four deterministic traces against a layout you
+  control, with a reference layout to diff against.
+- **Machinery ahead of content, deliberately:** 5/5 rooms (21 objections), 5/5
+  drills, 8/8 desk specs. Desk *reference models* are not built yet.
+- **Outstanding: 49 lessons, 5 forge crates, 5 duck labs, 7 browser labs, 8 desk
+  models.**
+- **Verified:** `npm run verify` clean — lint, typecheck (including tests and
+  scripts), production build, 100 tests.
+
+See the RESUME POINT in `PLAN.md` for what is next and in what order.

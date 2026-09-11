@@ -3,28 +3,7 @@
 version = 4
 
 [[package]]
-name = "btree"
-version = "0.1.0"
-dependencies = [
- "kslab",
-]
-
-[[package]]
-name = "buffer-pool"
-version = "0.1.0"
-dependencies = [
- "kslab",
-]
-
-[[package]]
-name = "columnar"
-version = "0.1.0"
-dependencies = [
- "kslab",
-]
-
-[[package]]
-name = "hnsw"
+name = "encodings"
 version = "0.1.0"
 dependencies = [
  "kslab",
@@ -33,45 +12,3 @@ dependencies = [
 [[package]]
 name = "kslab"
 version = "0.1.0"
-
-[[package]]
-name = "mvcc"
-version = "0.1.0"
-dependencies = [
- "kslab",
-]
-
-[[package]]
-name = "optimizer"
-version = "0.1.0"
-dependencies = [
- "kslab",
-]
-
-[[package]]
-name = "rust-kv"
-version = "0.1.0"
-dependencies = [
- "kslab",
-]
-
-[[package]]
-name = "slotted-pages"
-version = "0.1.0"
-dependencies = [
- "kslab",
-]
-
-[[package]]
-name = "volcano"
-version = "0.1.0"
-dependencies = [
- "kslab",
-]
-
-[[package]]
-name = "wal"
-version = "0.1.0"
-dependencies = [
- "kslab",
-]

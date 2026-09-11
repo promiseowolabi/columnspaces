@@ -1,19 +1,27 @@
 /**
- * verify-wasm-lab — run the SAME ABI client the site uses against a built
- * lab module, headless. Proves the template traps cleanly and a solution
- * reports all-pass, without a browser.
+ * verify-wasm-lab — run the SAME ABI client the site uses against a built lab
+ * module, headless. Proves that a template traps cleanly and a solution reports
+ * all-pass, without a browser and without trusting `cargo test` alone: the
+ * browser path has its own failure modes (missing exports, an out-of-bounds
+ * report pointer, malformed JSON) that native tests cannot see.
  *
- *   bun scripts/verify-wasm-lab.ts <path-to.wasm> [expect-pass|expect-trap]
+ *   npx tsx scripts/verify-wasm-lab.ts <module.wasm> [expect-pass|expect-trap]
+ *
+ * Ported from bun to node deliberately: this repository has no bun, and a gate
+ * nobody on this machine can run is not a gate.
  */
+import { readFile } from 'node:fs/promises'
 import { runLabWasm, LabAbiError, LabTrapError } from '../src/lib/wasm-lab'
 
 const [wasmPath, expect] = [process.argv[2], process.argv[3] ?? 'expect-pass']
 if (!wasmPath) {
-  console.error('usage: bun scripts/verify-wasm-lab.ts <module.wasm> [expect-pass|expect-trap]')
+  console.error('usage: npx tsx scripts/verify-wasm-lab.ts <module.wasm> [expect-pass|expect-trap]')
   process.exit(2)
 }
 
-const bytes = await Bun.file(wasmPath).arrayBuffer()
+const file = await readFile(wasmPath)
+/* Copy into a standalone ArrayBuffer: Node Buffers are views into a shared pool. */
+const bytes = file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength) as ArrayBuffer
 try {
   const report = await runLabWasm(bytes)
   const failed = report.checks.filter((c) => !c.pass)

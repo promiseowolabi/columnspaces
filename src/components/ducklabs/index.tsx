@@ -26,13 +26,16 @@
 import { type ReactNode } from 'react'
 import { Database } from 'lucide-react'
 import { duckLabMeta } from '@/data/duck-labs'
+import ScanBillLab from './ScanBillLab'
 
 /**
  * The registry. Populated as each lab lands (phase 2 onward, PLAN.md).
  * Unknown ids render the placeholder rather than throwing — a lesson may
  * legitimately reference a lab that is still being built.
  */
-const REGISTRY: Record<string, (p: { trackColor: string }) => ReactNode> = {}
+const REGISTRY: Record<string, (p: { trackColor: string }) => ReactNode> = {
+  'scan-bill': ScanBillLab,
+}
 
 export function DuckLabView({ lab, trackColor }: { lab: string; trackColor: string }) {
   const C = REGISTRY[lab]

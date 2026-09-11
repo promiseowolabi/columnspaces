@@ -8,12 +8,13 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "typecheck": "tsc -b --noEmit",
+    "typecheck": "tsc -b && tsc -p tsconfig.test.json",
     "test": "vitest run",
     "report": "tsx scripts/report.ts",
-    "verify": "npm run lint && npm run build && npm run test"
+    "verify": "npm run lint && npm run typecheck && npm run build && npm run test"
   },
   "dependencies": {
+    "@duckdb/duckdb-wasm": "1.32.0",
     "@gsap/react": "^2.1.2",
     "@hookform/resolvers": "^5.2.2",
     "@radix-ui/react-accordion": "^1.2.12",
@@ -72,6 +73,7 @@
     "zustand": "^5.0.14"
   },
   "devDependencies": {
+    "@duckdb/node-api": "1.5.5-r.4",
     "@eslint/js": "^9.39.1",
     "@tailwindcss/typography": "^0.5.20",
     "@types/node": "^24.10.1",

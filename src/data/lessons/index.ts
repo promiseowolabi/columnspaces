@@ -18,9 +18,13 @@ import type { Lesson, SimId, TrackId } from './types'
 
 // C0 — The Scan Contract
 import c0l1 from './c0/bytes-scanned-is-the-bill'
+import c0l2 from './c0/the-unit-is-never-a-value'
+import c0l3 from './c0/three-places-bytes-live'
+import c0l4 from './c0/pruning-is-not-a-feature'
+import c0l5 from './c0/the-scan-budget'
 
 export const LESSONS_BY_TRACK: Record<TrackId, Lesson[]> = {
-  c0: [c0l1],
+  c0: [c0l1, c0l2, c0l3, c0l4, c0l5],
   c1: [],
   c2: [],
   c3: [],
