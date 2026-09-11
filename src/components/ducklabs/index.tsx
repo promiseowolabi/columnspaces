@@ -26,6 +26,7 @@
 import { type ReactNode } from 'react'
 import { Database } from 'lucide-react'
 import { duckLabMeta } from '@/data/duck-labs'
+import CodecBenchLab from './CodecBenchLab'
 import ScanBillLab from './ScanBillLab'
 
 /**
@@ -35,6 +36,7 @@ import ScanBillLab from './ScanBillLab'
  */
 const REGISTRY: Record<string, (p: { trackColor: string }) => ReactNode> = {
   'scan-bill': ScanBillLab,
+  'codec-bench': CodecBenchLab,
 }
 
 export function DuckLabView({ lab, trackColor }: { lab: string; trackColor: string }) {

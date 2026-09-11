@@ -23,9 +23,16 @@ import c0l3 from './c0/three-places-bytes-live'
 import c0l4 from './c0/pruning-is-not-a-feature'
 import c0l5 from './c0/the-scan-budget'
 
+// C1 — Encodings
+import c1l1 from './c1/a-column-is-a-domain'
+import c1l2 from './c1/dictionary-and-run-length'
+import c1l3 from './c1/bit-packing-and-frame-of-reference'
+import c1l4 from './c1/nulls-strings-and-the-floor'
+import c1l5 from './c1/compute-without-decoding'
+
 export const LESSONS_BY_TRACK: Record<TrackId, Lesson[]> = {
   c0: [c0l1, c0l2, c0l3, c0l4, c0l5],
-  c1: [],
+  c1: [c1l1, c1l2, c1l3, c1l4, c1l5],
   c2: [],
   c3: [],
   c4: [],

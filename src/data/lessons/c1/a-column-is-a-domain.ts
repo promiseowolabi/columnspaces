@@ -1,0 +1,326 @@
+import type { Lesson } from '../types'
+
+const lesson: Lesson = {
+  id: 'c1.l1',
+  slug: 'a-column-is-a-domain',
+  trackId: 'c1',
+  index: 1,
+  title: 'A Column Is a Domain',
+  minutes: 14,
+  hook: 'Five columns of one table, same rows, same file: the best compresses 32×, the worst compresses by nothing at all — and the worst one is in your dashboard query.',
+  exercise: 'quiz',
+  artifact: 'layout-design',
+  takeaway: {
+    number: '2.2×',
+    claim:
+      'The dashboard projection on the course fixture compresses about 2.2× by this arithmetic, and roughly 72% of the surviving bytes are the one uniform-random column that compressed by nothing — so a table-level compression ratio is an average over columns that differ by more than 30×.',
+  },
+  blocks: [
+    {
+      type: 'prose',
+      md: `Here is the course fixture, column by column, priced in the byte formulas forge lab 01 pins. One block of **100,000 rows** — the fixture's row-group size — with each column modelled as the \`Option<i64>\` the lab's codecs actually eat. Plain is 8 bytes per value plus 8 bytes of framing, so a block is **800,008 B** before anything clever happens.
+
+| column | shape in the block | codec that wins | encoded | vs plain |
+|---|---|---|---|---|
+| \`status\` | 4 distinct codes | bit-pack, 2 bits | 25,008 B | **32.0×** |
+| \`region\` | 8 distinct codes | bit-pack, 3 bits | 37,512 B | **21.3×** |
+| \`customer_id\` | ~82,000 distinct, range 0–249,999 | bit-pack, 18 bits | 225,008 B | **3.6×** |
+| \`order_ts\` | monotone, block spans ~36.5 days | frame-of-reference, 22 bits | 275,016 B | **2.9×** |
+| \`net_revenue\` | ~60,000 distinct doubles, uniform | none — Plain wins | 800,008 B | **1.0×** |
+
+Same table. Same file. Same rows. **32× to 1.0×.**
+
+Redo any line of it: bit-packing costs \`⌈n × w / 64⌉\` words of 8 bytes, so \`status\` at 2 bits is \`⌈100,000 × 2 / 64⌉ = 3,125\` words, 25,000 B of payload. That is the whole calculation. There is no codec cleverness in it and no engine involved.
+
+Now project the dashboard query from C0.L1 — \`order_ts\`, \`region\`, \`net_revenue\` — and add the three lines up. 275,016 + 37,512 + 800,008 = **1,112,536 B**, against 2,400,024 B plain. **2.2×.** And 72% of what survived is \`net_revenue\`, which compressed by nothing.
+
+That is the number this track exists to make you able to say out loud. Not "columnar gives you 10×". *Your* projection, on *your* columns, gets 2.2×, and here is the column that ate the budget.`,
+    },
+    {
+      type: 'prose',
+      md: `## Why a column compresses and a row page does not
+
+Compression is repetition-finding. Every codec in existence is a bet that some pattern recurs inside its window, and the size of the win is the size of the pattern's redundancy. That means the ratio is **a property of the data**, arriving at the codec. It is never a property of the format, and a format cannot promise you one.
+
+So the question is only ever: *what does the codec's window contain?*
+
+A **row page** contains whole rows. In the fixture, a 360-byte row is a timestamp, then a short string, then a double, then a 4-byte integer, then another string, then forty filler integers. Five types in the first 40 bytes. Nothing in that window resembles anything else in that window, because a row is a *record* — it is deliberately heterogeneous. A general-purpose compressor pointed at it finds a little structure across row boundaries, at a fixed offset, if the rows happen to be similar. That is the best case, and it is why row-store compression ratios cluster in the low single digits.
+
+A **column chunk** contains 100,000 values of one type, drawn from one domain, laid out physically adjacent. Every neighbour is the same kind of thing as every other neighbour. That is not a small improvement in the compressor's odds — it changes what "repetition" even means:
+
+- \`status\` holds four values, 100,000 times. The repetition is *the whole column*.
+- \`order_ts\` holds values that are enormous and almost identical to their neighbours. The repetition is in the *high bits*, which is not a repetition a byte-oriented compressor can see and is trivial for a frame of reference.
+- \`net_revenue\` holds a uniform draw over 90,000 values, as IEEE doubles. There is no repetition. There is nothing to find.
+
+**Three properties, and one type.** Those are the two facts a codec exploits, and physical adjacency is what makes them exploitable at all — a shuffled column has the same cardinality and the same range, and RLE on it is worthless. This is the same lever C0.L4 measured for pruning, viewed from the other side.`,
+    },
+    {
+      type: 'diagram',
+      caption: 'fig 1 — one type, one domain, and the three properties that pick the codec',
+      height: 72,
+      nodes: [
+        { id: 'page', x: 2, y: 2, w: 44, h: 10, label: 'a row page', sub: 'the unit holds whole records', color: '#FB7185' },
+        { id: 'chunk', x: 54, y: 2, w: 44, h: 10, label: 'a column chunk', sub: 'the unit holds one column', color: '#3EF2A4' },
+        { id: 'mixed', x: 2, y: 16, w: 44, h: 9, label: 'ts · str · f64 · i32 · str · pad…', sub: '5 types in 40 bytes', color: '#FB7185' },
+        { id: 'vals', x: 54, y: 16, w: 44, h: 9, label: '100,000 values, one domain', sub: 'every neighbour is the same kind of thing', color: '#3EF2A4' },
+        { id: 'card', x: 2, y: 29, w: 30, h: 9, label: 'cardinality', sub: 'how few distinct', color: '#22D3EE' },
+        { id: 'ord', x: 35, y: 29, w: 30, h: 9, label: 'ordering', sub: 'how clustered', color: '#22D3EE' },
+        { id: 'rng', x: 68, y: 29, w: 30, h: 9, label: 'range', sub: 'how narrow the spread', color: '#22D3EE' },
+        { id: 'dict', x: 2, y: 42, w: 30, h: 9, label: 'dictionary', sub: 'status: 4 distinct', color: '#A3E635' },
+        { id: 'rle', x: 35, y: 42, w: 30, h: 9, label: 'run-length', sub: 'sorted: runs, not rows', color: '#A3E635' },
+        { id: 'pack', x: 68, y: 42, w: 30, h: 9, label: 'bit-pack / frame', sub: 'order_ts: 22 bits, not 64', color: '#A3E635' },
+        { id: 'floor', x: 20, y: 55, w: 60, h: 10, label: 'Plain — the mandatory fallback', sub: 'net_revenue: none of the three properties, 1.0×', color: '#FBBF24' },
+      ],
+      edges: [
+        { from: 'page', to: 'mixed' },
+        { from: 'chunk', to: 'vals' },
+        { from: 'vals', to: 'card' },
+        { from: 'vals', to: 'ord' },
+        { from: 'vals', to: 'rng' },
+        { from: 'card', to: 'dict' },
+        { from: 'ord', to: 'rle' },
+        { from: 'rng', to: 'pack' },
+        { from: 'dict', to: 'floor' },
+        { from: 'rle', to: 'floor' },
+        { from: 'pack', to: 'floor' },
+      ],
+      steps: [
+        {
+          caption:
+            'A row page holds whole records, so the codec\'s window is deliberately heterogeneous: a timestamp, a string, a double and a 4-byte integer inside the first forty bytes. There is little for a repetition-finder to find, which is why row-store ratios sit in the low single digits.',
+          active: ['page', 'mixed'],
+          edges: ['page->mixed'],
+        },
+        {
+          caption:
+            'A column chunk holds one hundred thousand values of one type drawn from one domain, physically adjacent. Adjacency is the load-bearing word: the same values in a shuffled order have identical cardinality and identical range, and run-length encoding on them is worthless.',
+          active: ['chunk', 'vals'],
+          edges: ['chunk->vals'],
+        },
+        {
+          caption:
+            'Three measurable properties of that column — and only of that column — predict which codec wins: how few distinct values it holds, how clustered those values are physically, and how narrow the spread between its minimum and maximum is.',
+          active: ['card', 'ord', 'rng'],
+          edges: ['vals->card', 'vals->ord', 'vals->rng'],
+        },
+        {
+          caption:
+            'Each property has its codec. Low cardinality feeds a dictionary; physical clustering feeds run-length; a narrow range feeds bit-packing, and a narrow spread around a huge base feeds frame-of-reference. Pick from the column, never from the codec\'s reputation.',
+          active: ['dict', 'rle', 'pack'],
+          edges: ['card->dict', 'ord->rle', 'rng->pack'],
+        },
+        {
+          caption:
+            'And when a column has none of the three properties, every codec loses and the honest answer is Plain at 1.0×. That is not a bug to tune away; it is the entropy of your data, and forge lab 01 grades the fallback as never_expands precisely because implementations would rather keep trying.',
+          active: ['floor'],
+          edges: ['dict->floor', 'rle->floor', 'pack->floor'],
+        },
+      ],
+    },
+    {
+      type: 'statline',
+      stats: [
+        {
+          value: '32× → 1.0×',
+          label: 'best and worst column of one table',
+          hint: 'status bit-packs to 2 bits per value; net_revenue is a uniform draw of doubles with no distinct-value, clustering or range structure to exploit. Same file, same rows.',
+        },
+        {
+          value: '2.2×',
+          label: 'the dashboard projection, all three columns',
+          hint: '(275,016 + 37,512 + 800,008) B against 2,400,024 B plain, in forge lab 01\'s pinned byte formulas at a 100,000-row block.',
+        },
+        {
+          value: '72%',
+          label: 'share of surviving bytes from one column',
+          hint: '800,008 of 1,112,536 B. The incompressible column dominates the total, which is why a per-table ratio hides the thing you need to know.',
+        },
+        {
+          value: '3',
+          label: 'properties that predict the codec',
+          hint: 'Cardinality, ordering, range. All three are measurable from the column before you encode anything — and none of them is a property of the format.',
+        },
+      ],
+    },
+    {
+      type: 'prose',
+      md: `## The honest floor, and why C0.L1 refused to quote it
+
+\`net_revenue\` in the fixture is \`(hash(i * 3 + seed) % 90000) / 100.0\` as a \`DOUBLE\`. Read that as a specification of a near-worst case, because that is what it is:
+
+- **Cardinality.** 90,000 possible values. In a 100,000-row block you expect \`90,000 × (1 − e^(−100,000/90,000)) ≈ 60,400\` distinct — about 60% of the rows. A dictionary needs distinct below half the rows to break even (C1.L2 does that arithmetic), so it *expands* here: \`8 × 60,400 + 4 × 100,000 ≈ 883,000 B\` against 800,008 B plain.
+- **Ordering.** The hash is uniform and unrelated to row order, so adjacent values are almost never equal. Runs ≈ rows, and RLE costs 12 bytes per run: about 1.2 MB, half again *larger* than plain.
+- **Range.** As a double, the 8 bytes are an IEEE bit pattern. The mantissa varies across the whole draw, so there is no narrow window to pack into. Bit-packing and frame-of-reference do not apply to the bit pattern at all.
+
+Zero for three. The correct encoding is Plain, and the correct ratio to report is **1.0×**.
+
+It is worth being exact about *how* worst this case is, because "incompressible" gets thrown around. A full-precision uniform double — 52 bits of mantissa entropy, which is what the bench's \`noise\` column holds — is the genuine floor, and nothing beats it, ever. The fixture's revenue column is a rung above that: 90,000 distinct values is ~16.5 bits of real information, so a writer with narrow dictionary codes recovers a little. Treat 1.0× as the pessimistic bound rather than the expected value, and treat any real measure column — prices with two decimals, small integer quantities, slowly drifting sensor readings — as considerably better than this.
+
+This is why C0.L1's lab reported a projection factor and a pruning percentage and then explicitly deferred compression to this track. Quoting a compression number there would have meant quoting **2.2× on the very query the course had just used to sell a 685× improvement** — true, defensible, and rhetorically inconvenient. The two factors that made that lab impressive were projection and pruning. Compression was the third factor and it was the weak one, because the column the dashboard sums is a random double.
+
+**Two things to carry from that.** First, the compression factor is the one term of the scan bill you genuinely cannot predict from the schema alone — you need the data. Second, a course, a vendor or a colleague who quotes a ratio without naming the column mix it was measured on has told you nothing you can use.`,
+    },
+    {
+      type: 'callout',
+      variant: 'warning',
+      title: 'the physical type decided the ratio, not the codec',
+      md: `\`net_revenue\` is a currency amount with two decimal places. Its true domain is **integer cents, 0 to 89,999** — a 17-bit range. Store it that way and the same information bit-packs to \`⌈100,000 × 17 / 64⌉ = 26,563\` words, about 212 KB: **3.8×** instead of 1.0×.
+
+Nothing about the codec changed. Nothing about the information changed. The column went from incompressible to nearly 4× because someone chose \`DECIMAL\`/integer cents instead of \`DOUBLE\` in a DDL review.
+
+This is the most under-used compression lever in practice, and it is not a compression decision — it is a schema decision, made once, by whoever wrote the table definition. Two habits follow: a float that represents a bounded decimal quantity is a bug in two ways, and when the ratio disappoints, check the *types* before you go looking for a codec.
+
+(It is also the reason floats get their own treatment in real formats — see the vendor block below.)`,
+    },
+    {
+      type: 'callout',
+      variant: 'analogy',
+      title: 'the filing analogy, one shelf further',
+      md: `C0.L1 had an archivist who kept a ledger per field rather than a folder per invoice. Follow that archivist one step further, into what the ledgers *look like*.
+
+The folder is a page of mixed handwriting: a date, a name, an amount, a code, in five different formats. You cannot summarise it — there is nothing to summarise, every line is different in kind.
+
+The region ledger is one hundred thousand entries and eight of them are words. You do not write it out; you write "EMEA" once at the top with a number beside it, and then a hundred thousand numbers. The date ledger is a hundred thousand dates within the same five weeks, so you write the first date and then "+31s, +29s, +30s". The amount ledger is a hundred thousand unrelated amounts, and there is nothing to do but write them all down.
+
+The archivist did not get better at shorthand. The shelf got sorted by *kind*, and shorthand only exists for things of one kind.`,
+    },
+    {
+      type: 'vendor',
+      snapshot: '2026-09',
+      title: 'What Parquet does about all of this — including the column that will not compress',
+      systems: ['parquet'],
+      sources: [
+        'https://parquet.apache.org/docs/file-format/data-pages/encodings/',
+        'https://parquet.apache.org/docs/file-format/data-pages/compression/',
+      ],
+      md: `The Parquet encodings specification is the standardised version of the three properties above, and it is worth reading as a list of bets on data shape rather than a feature list.
+
+Per the spec, \`PLAIN\` (enum 0) is supported for all physical types and is **"used whenever a more efficient encoding cannot be used"** — the fallback, written into the format, exactly as forge lab 01's \`never_expands\` check requires of you. \`DOUBLE\` under \`PLAIN\` is 8 bytes IEEE little-endian: no cleverness, and none available.
+
+Then the bets:
+
+- **\`RLE_DICTIONARY\` (8)** — a dictionary page per column chunk, with the indices stored using the RLE/bit-packing hybrid. The cardinality bet. The spec is explicit about the failure mode: *"If the dictionary grows too big, whether in size or number of distinct values, the encoding will fall back to the plain encoding."*
+- **\`DELTA_BINARY_PACKED\` (5)** — \`INT32\`/\`INT64\` only. Deltas, then a per-block frame of reference over those deltas, then a bit width chosen **per miniblock**. The ordering-plus-range bet, and the mechanism that makes a monotone integer column cheap. Note the boundary carefully: the *specification defines* this encoding, which is not the same as your writer emitting it, and not the same as it being available for the type you actually declared. The Codec Bench above is where you find out which.
+- **\`BYTE_STREAM_SPLIT\` (9)** — supported for \`FLOAT\`, \`DOUBLE\`, \`INT32\`, \`INT64\` and fixed-length byte arrays. The spec states plainly that it **"does not reduce the size of the data"**; it scatters byte *k* of every value into stream *k*, so a following general-purpose compressor sees the near-constant exponent bytes grouped together instead of interleaved with random mantissa bytes.
+
+That last one is the honest floor with a format-level workaround attached. The format has an encoding whose entire purpose is to make floating-point columns *slightly* more amenable to a downstream compressor, because the direct approaches do not work. When a column store ships a dedicated mechanism for your worst case, that is the specification agreeing with the arithmetic above rather than contradicting it.
+
+Note what is **not** in that list: a general-purpose run-length encoding for value columns. The spec restricts \`RLE\` (3) to repetition and definition levels, dictionary indices, and booleans. C1.L2 returns to why.`,
+    },
+    {
+      type: 'isomorphism',
+      title: 'compression ratio ≡ things you already know are input-dependent',
+      pairs: [
+        {
+          os: 'gzip -9 on a log file versus on a JPEG',
+          osLine:
+            'Nobody blames gzip for the JPEG. The file was already compressed; there is no redundancy left, and the same flag produces 20× on one input and 1.0× on the other.',
+          llm: 'a codec on a status column versus on a random double',
+          llmLine:
+            'Identical situation, routinely misattributed. When the ratio disappoints, the instinct is to blame the format or the codec, but the entropy of the column is doing all the work.',
+        },
+        {
+          os: 'struct-of-arrays for SIMD',
+          osLine:
+            'You reorganise records into parallel arrays so a vector register sees homogeneous, contiguous values instead of a strided walk through mixed fields.',
+          llm: 'a column chunk',
+          llmLine:
+            'The same transformation, applied for compression instead of arithmetic — and it turns out to buy both, which is what C4 spends a track on.',
+        },
+        {
+          os: 'normalising a repeated string into a lookup table',
+          osLine:
+            'You did this in a schema review: the same forty-character label stored ten million times became a small table plus an integer key. Nobody called it compression.',
+          llm: 'dictionary encoding',
+          llmLine:
+            'That is exactly what it is, applied automatically per column chunk, and unnormalised again on read so nobody has to write a join.',
+        },
+      ],
+    },
+    {
+      type: 'prose',
+      md: `## Do not take any of that on trust
+
+Everything above is arithmetic in a model, and a course that asks to be believed about compression ratios has already lost the argument it is trying to teach. So predict, then measure.
+
+The Codec Bench writes **one column per Parquet file** — six files, deliberately, because a wide file would let you read a whole-file ratio and credit it to "Parquet" rather than to a column's properties. You commit to a ratio bucket for each column *before* anything runs, and only predictions made before the run are scored, because committing first is the entire skill.
+
+Expect to get one of them wrong, and expect it to be the timestamp. The arithmetic in this lesson prices \`order_ts\` at 2.9× because it assumes a frame-of-reference codec is available; the writer that produces the fixture does not offer one for that type, and the measured ratio comes out far worse than the model. That is the lab beating the lesson, which is what it is for — and it sharpens the rule rather than breaking it. **The properties tell you what is exploitable. They do not promise that your writer will exploit it.**`,
+    },
+    {
+      type: 'ducklab',
+      lab: 'codec-bench',
+    },
+    {
+      type: 'prose',
+      md: `## What to measure before you promise a ratio
+
+The arithmetic in this lesson is a model, and the professional move is to name where it is wrong before someone else does. Four places:
+
+1. **It is lab 01's byte formulas, not a real writer's.** The lab pins dictionary codes at 4 bytes and a run at 12; a real format bit-packs its codes and may delta-encode its integers, so a real file can land better than this model on the compressible columns — or, as the bench above shows for the timestamp, *worse*, when the writer has no codec for the property the column has.
+2. **There is no general-purpose compressor on top.** Snappy or zstd over an already-encoded page will find more, mostly on the columns that were already winning. It will not rescue the random double.
+3. **The block size sets the width.** \`order_ts\` needs 22 bits because a 100,000-row block spans 36.5 days. Halve the block and the span halves and the width drops by a bit; that is why row-group size is a compression dial as well as a pruning dial, and why C2 has to decide both at once.
+4. **Cardinality is per block, not per table.** \`customer_id\` has 250,000 distinct values in the table and about 82,000 in a block, and the codec only ever sees the block. Quoting table-level cardinality at a codec is the single most common arithmetic error in this subject.
+
+So the sentence to carry into a design review is not "we expect around 10×". It is: **"the two columns in this projection that matter compress about 3× and about 20×; the one that dominates the bytes compresses by nothing, so plan on roughly 2×, and here is what would change that — storing the amount as an integer."**
+
+That sentence is unpopular and correct, and it is the one that survives the room.`,
+    },
+    {
+      type: 'quiz',
+      questions: [
+        {
+          q: 'A platform team reports "we are seeing 9× compression on the warehouse". Your dashboard\'s three-column projection computes to about 2.2×. Both numbers are honestly measured. What reconciles them?',
+          options: [
+            'The team is measuring after a general-purpose compressor and you are measuring before it, which accounts for the whole gap',
+            'A table-level ratio is a byte-weighted average over every column, and the fixture is 40 filler integer columns nobody queries; your projection deliberately selects three columns, one of which is a uniform-random double that compresses 1.0× and then dominates the surviving bytes',
+            'Compression ratios are not comparable between engines, so neither number transfers',
+            'Your projection is too narrow — ratios improve as you scan more columns',
+          ],
+          correct: [1],
+          explanation:
+            'Both numbers describe different column mixes. The table-level figure is dominated by the long tail of low-cardinality or narrow-range filler columns; the projection ratio is dominated by whichever selected column resists compression, because after encoding it is most of the bytes. A general-purpose compressor moves both numbers somewhat but does not close a 4× gap, and the ratio that predicts your scan bill is always the one for the columns your query actually reads.',
+        },
+        {
+          q: 'A column holds `customer_id`: integers in 0–249,999, about 82,000 distinct inside a 100,000-row block, arriving in no particular order. Which codec should the chooser pick, and why?',
+          options: [
+            'Dictionary — 82,000 distinct is far fewer than 250,000, so the values are repetitive',
+            'Run-length — id columns hold repeat customers, so there will be runs',
+            'Bit-packing at 18 bits — the range 0–249,999 needs 18 bits per value instead of 64, giving about 3.6×; dictionary expands here because 82,000 distinct in 100,000 rows is above the break-even, and RLE expands because unordered values give runs of length ~1',
+            'Plain — high-cardinality columns do not compress',
+          ],
+          correct: [2],
+          explanation:
+            'Range is the property this column has, and it is the only one. The dictionary trap is comparing distinct values against the table\'s domain (250,000) rather than against the rows in the block (100,000): at 82,000 distinct the dictionary costs 8 bytes per entry plus a code per row and comes out larger than plain. RLE needs physical adjacency, which unordered arrival denies it. And "high cardinality does not compress" is the folklore this lesson exists to break — a narrow range compresses regardless of cardinality.',
+        },
+        {
+          q: 'Finance asks you to commit to a storage-and-scan reduction from re-encoding a fact table. Which answer survives the room?',
+          options: [
+            '"Columnar formats typically deliver 8–10×, so we will budget conservatively at 6×."',
+            '"We will know after the migration; compression is data-dependent."',
+            '"Per column, from the current data: the two low-cardinality dimensions land around 20×, the ids around 3×, and the revenue amount at 1.0× because it is stored as a float — and it dominates the projection, so plan on roughly 2× for scan volume. Storage improves more than scan does, because scan is also a function of pruning. The assumption I am least sure of is the block-level cardinality once the loader changes."',
+            '"Storage reduction is not the lever anyway — we should scale the cluster down instead."',
+          ],
+          correct: [2],
+          explanation:
+            'Per-column arithmetic, the dominating column named, the storage-versus-scan distinction made explicit, and the weakest assumption stated before the room finds it. The first option is an industry average applied to a specific table, which is exactly the mistake that turns into a missed commitment. The second abandons an estimate that is entirely computable from data already on disk. The fourth changes the subject to a different line item without answering the question.',
+        },
+      ],
+    },
+    {
+      type: 'deepdive',
+      title: 'going deeper: compression as an execution decision',
+      md: `The foundational reading is **Abadi, Madden & Ferreira, "Integrating Compression and Execution in Column-Oriented Database Systems" (SIGMOD 2006)**. Its argument is stronger than "columns compress better": the *right* codec is the one your operators can compute over without decoding, which is why light-weight schemes beat heavy ones in a database even when the heavy ones produce fewer bytes. That is where C1 is heading and why this track ends on execute-on-compressed rather than on ratios.
+
+For the schemes themselves, **Zukowski, Héman, Nes & Boncz, "Super-Scalar RAM-CPU Cache Compression" (ICDE 2006)** introduces PFOR, PFOR-DELTA and PDICT with the exception-handling trick that makes a frame of reference survive outliers — the thing forge lab 01 deliberately leaves out so you feel its absence. **Lemire & Boytsov, "Decoding billions of integers per second through vectorization"** is the paper Parquet's own delta encoding cites as its source; it is linked from the encodings specification.
+
+For the floor itself, the relevant frame is information-theoretic: a uniform draw over *k* values has entropy log₂ *k* bits per value and **no** encoder beats that on average. \`net_revenue\` over 90,000 values is about 16.5 bits of real information wrapped in 64 bits of IEEE double, which is simultaneously why it will not compress as a double and why integer cents at 17 bits nearly hits the bound.
+
+Then read the **Apache Parquet encodings specification** directly — it is short, and it reads as a list of data-shape bets with the fallback stated in the first paragraph.
+
+Cross-links: **tablespace T7.L1** works the row-page side of this comparison, including why a page of heterogeneous records is the right layout when you need the whole record. **C4.L3** returns to these same encodings from the execution side. Next: **C1.L2** does the arithmetic for the two codecs that exploit cardinality and clustering, and hands you forge lab 01.`,
+    },
+  ],
+}
+
+export default lesson

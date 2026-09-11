@@ -164,3 +164,22 @@ change one number in a dossier and a different objection must appear.
   scripts), production build, 100 tests.
 
 See the RESUME POINT in `PLAN.md` for what is next and in what order.
+
+### Known limitations
+
+- **Deep links answer 404 (status only).** GitHub Pages has no SPA rewrite, so
+  `/lesson/c0.l1` is served as `404.html` — the body is the full app and React
+  Router renders the right page, but the HTTP status is 404. Browsers do not
+  care; crawlers and strict HTTP clients do. `llms.txt` therefore points agents
+  at `/lessons-md/*.md`, which return 200 and are cleaner to ingest. Moving to
+  hash routing would fix the status at the cost of uglier URLs; it has not been
+  judged worth it.
+- **Desk reference models are specs, not implementations.** The eight desks
+  publish their decision, submission shape and graded checks, and the A-track
+  lessons are written against them, but the grading models are not built yet.
+- **The rooms are a study surface until the dossier editor lands.** Every
+  objection is visible with its outcomes; the predicates that decide which ones
+  *fire* are implemented and tested, but there is no submission form yet.
+- **DuckDB labs need network on first run.** The engine is fetched from jsDelivr
+  rather than vendored, so the deploy stays small. The lessons' arithmetic stands
+  without the labs; the labs exist to let you falsify it.

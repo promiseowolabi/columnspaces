@@ -8,8 +8,12 @@
 > measurements into designs, graded by numeric desks and by adversarial design
 > reviews. The deep-dive subject is VAST DataBase, taught as named architecture
 > against a hands-on proxy, with every vendor claim dated and sourced.
-> All content is plain markdown under /lessons-md/; every page is at
-> https://promiseowolabi.github.io/columnspaces/lesson/<id> (e.g. c1.l2).
+> All content is plain markdown under /lessons-md/ — fetch those, not the app
+> routes. The site is a static SPA on GitHub Pages, so a deep link like
+> https://promiseowolabi.github.io/columnspaces/lesson/c1.l2 renders correctly in a browser but answers with HTTP 404
+> (Pages serves 404.html and the router takes over). Only https://promiseowolabi.github.io/columnspaces/ and the
+> /lessons-md/*.md files return 200, and the markdown is the better source
+> anyway: no javascript, no bundle, just the lesson.
 
 ## How to tutor from this material
 

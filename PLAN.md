@@ -509,19 +509,63 @@ Current state per `npm run report`: **5/54 lessons**, 1/6 forge crates, 1/6 duck
 labs, 0/7 browser labs, 0/8 desk models, 5/5 rooms, 5/5 drills, 2 vendor blocks
 (0 stale). 100 tests.
 
-### Next, in order (phase 3 — the engine half, part 1)
+### Phase 3 (part 1) — shipped
 
-1. **C1 lessons (5)** against forge lab 01, which already exists — the lab was
-   built first deliberately, so the lessons can quote what it actually grades.
-   C1 is also where compression ratios must be measured on *realistic* columns,
-   since C0.L1's lab explicitly defers that.
-2. **The `codec-bench` duck lab** — predict a ratio from column statistics, then
-   let the engine judge the prediction.
-3. **C2 lessons (6)** and **forge lab 02 `zone-maps`**, whose
-   `no_false_negatives` check is the course's sharpest invariant.
-4. **The `pruning-lab` duck lab**, and **Column Week drills 1–2** wired into the
-   drills page.
-5. **The `layout-designer` browser lab** — the first of the seven.
+- **Issues found and fixed first.** CI had failed on both earlier pushes: the
+  build job was green throughout and only `deploy` failed, because **GitHub Pages
+  was never enabled**. Enabled with `build_type=workflow`; the site is live at
+  `https://promiseowolabi.github.io/columnspaces/`.
+- **The dead UI layer is gone.** `src/components/ui/` (60 shadcn components) and
+  `components.json` deleted: nothing outside that directory imported any of it.
+  The live code needs **ten** runtime packages; the other 37 existed only to serve
+  dead files — and that is how the vulnerable `lodash` arrived, transitively via
+  `recharts`, via an unused chart component.
+- **Advisories 21 → 0.** Production reached zero by deleting the dead layer plus
+  patching react-router (high: RSC-mode CSRF bypass). Dev reached zero via
+  semver-safe patches plus a vitest 3 → 4.1.11 major, taken because the remaining
+  moderate was a path traversal in `@vitest/mocker` and no test here uses the
+  mocking API. All tests pass unchanged under vitest 4.
+- **CI hardened.** It never ran `npm run typecheck`, so tests and scripts were
+  unchecked in CI. Now: node 22, runs on pull requests with deploy skipped, and a
+  new **`labs` job** guarding what CI can actually verify — template compiles,
+  harness compiles, template is **red**, wasm exports the ABI, and no zip contains
+  `_solutions` or build output. All three jobs green.
+- **Deep-link caveat documented, not hidden.** GitHub Pages has no SPA rewrite,
+  so `/lesson/c0.l1` serves `404.html` — correct page, HTTP 404 status. `llms.txt`
+  now directs agents to `/lessons-md/*.md`, which return 200, and README lists it
+  under known limitations.
+- **C1 Encodings complete: 5/5 lessons.** `a-column-is-a-domain`,
+  `dictionary-and-run-length`, `bit-packing-and-frame-of-reference`,
+  `nulls-strings-and-the-floor`, `compute-without-decoding`.
+- **The `codec-bench` duck lab**, with 23 native-DuckDB tests asserting ratio
+  *orderings* in generous bands rather than byte counts.
+- **A finding that changed the content.** DuckDB's Parquet writer emits `PLAIN`
+  for `TIMESTAMP` — no `DELTA_BINARY_PACKED` — so a strictly monotone timestamp
+  column compresses ~1.1×, not the ~3× the codec arithmetic predicts. Rather than
+  bury it: C1.L1 tells the reader to expect the lab to beat the lesson on exactly
+  that column, C1.L3 gained a second caveat separating "the format defines this
+  encoding" from "your writer emits it", and the test asserts PLAIN is present and
+  DELTA_BINARY_PACKED is absent, so a future writer change fails the suite and
+  forces the copy to be updated.
+
+Current state per `npm run report`: **10/54 lessons**, 1/6 forge crates, 2/6 duck
+labs, 0/7 browser labs, 0/8 desk models, 5/5 rooms, 5/5 drills, 5 vendor blocks
+(0 stale). **123 tests.**
+
+### Next, in order (phase 3 — the engine half, part 2)
+
+1. **Forge lab 02 `zone-maps`** — build it before the C2 lessons, the same order
+   that worked for C1: the lessons then quote what the harness actually grades.
+   `no_false_negatives` is the sharpest invariant in the course.
+2. **C2 lessons (6)** — row groups and statistics, sort vs partition keys,
+   clustering depth, bloom filters, the pruning-ratio promise, and the
+   small-file generator.
+3. **The `pruning-lab` duck lab** — move the sort key and the row-group size and
+   watch row groups pruned move, including the point where finer groups make it
+   worse.
+4. **The `layout-designer` browser lab**, and **Column Week drills 1–2** wired
+   into the drills page.
+5. Then C3 + forge lab 04 `parquet-reader`, which pairs naturally.
 
 Parallelisation note: lessons within a track are independent files and fan out
 well to sub-agents once `CONTENT-SPEC.md` is the contract; forge crates and the
