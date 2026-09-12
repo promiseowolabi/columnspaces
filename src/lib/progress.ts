@@ -1,5 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import type { Dossier, Outcome } from '@/data/rooms'
+import type { Verdict } from '@/lib/rooms/encounter'
 
 /**
  * Columnspaces progress store.
@@ -47,6 +49,23 @@ export interface FleetWeekProgress {
   docText?: string
 }
 
+/**
+ * One learner's attempt record for a Design Review room.
+ *
+ * Rooms are graded by pure predicates over the dossier, so an attempt is fully
+ * determined by the numbers submitted — which is why this stores the outcomes
+ * rather than a score. `bestVerdict` is kept because re-entering a room with a
+ * better dossier is the intended way to improve, and losing a room you had
+ * already survived should not erase that you survived it.
+ */
+export interface RoomRun {
+  attempts: number
+  bestVerdict?: Verdict
+  /** objectionId → outcome, from the most recent attempt. */
+  lastOutcomes: Record<string, Outcome>
+  survivedAt?: string // ISO
+}
+
 export type CodeLang = 'python' | 'java' | 'rust' | 'c'
 
 export interface ProgressSettings {
@@ -61,6 +80,15 @@ export interface ProgressState {
   labs: Record<string, LabProgress>
   fleetWeek: FleetWeekProgress
   capstone: CapstoneProgress
+  /**
+   * The numbers the learner has submitted across every desk — the single input
+   * the Design Review rooms read. It lives in the same persisted namespace as
+   * everything else and rides the same export/import snapshot, because a dossier
+   * that does not survive a reload cannot be attacked next week.
+   */
+  dossier: Dossier
+  /** roomId → attempt record. */
+  rooms: Record<string, RoomRun>
   xp: number
   streakDays: string[] // ISO dates with any activity
   achievements: string[]
@@ -79,6 +107,12 @@ export interface ProgressState {
   setFleetWeekDoc: (text: string) => void
   completeCapstoneStep: (stepId: string, stepIndex: number) => void
   setCapstoneMetrics: (metrics: CapstoneMetrics) => void
+  /** Set one dossier field. Passing `undefined` (or a blank string) UNSETS it — omission is a submission. */
+  setDossierField: <K extends keyof Dossier>(key: K, value: Dossier[K]) => void
+  /** Merge a patch; keys whose value is `undefined` are unset, not stored as undefined. */
+  setDossier: (patch: Partial<Dossier>) => void
+  clearDossier: () => void
+  recordRoomRun: (roomId: string, verdict: Verdict, outcomes: Record<string, Outcome>) => void
   unlockAchievement: (id: string) => void
   updateSettings: (patch: Partial<ProgressSettings>) => void
   importProgress: (json: string) => boolean
@@ -92,6 +126,8 @@ export const XP = {
   capstoneStep: 150,
   lab: 200,
   fleetWeekAct: 250,
+  /** Surviving a Design Review room, once per room. */
+  room: 250,
 } as const
 
 export const TOTAL_LESSONS = 37
@@ -128,6 +164,8 @@ const initialData = {
   labs: {} as Record<string, LabProgress>,
   fleetWeek: { actsDone: [] as string[], scores: {} as Record<string, number> },
   capstone: { step: 0, stepsDone: [] as string[] },
+  dossier: {} as Dossier,
+  rooms: {} as Record<string, RoomRun>,
   xp: 0,
   streakDays: [] as string[],
   achievements: [] as string[],
@@ -294,6 +332,51 @@ export const useProgress = create<ProgressState>()(
 
       setCapstoneMetrics: (metrics) => set((s) => ({ capstone: { ...s.capstone, metrics } })),
 
+      setDossierField: (key, value) =>
+        set((s) => {
+          const next: Dossier = { ...s.dossier }
+          const blank = value === undefined || (typeof value === 'string' && value.trim() === '')
+          /* Unset rather than store `undefined`: a blank must be indistinguishable
+             from never-submitted, in memory and in the exported snapshot alike. */
+          if (blank) delete next[key]
+          else next[key] = value
+          return { dossier: next, streakDays: touchStreak(s.streakDays) }
+        }),
+
+      setDossier: (patch) =>
+        set((s) => {
+          const next: Dossier = { ...s.dossier }
+          for (const [k, v] of Object.entries(patch)) {
+            const key = k as keyof Dossier
+            if (v === undefined) delete next[key]
+            else Object.assign(next, { [key]: v })
+          }
+          return { dossier: next, streakDays: touchStreak(s.streakDays) }
+        }),
+
+      clearDossier: () => set({ dossier: {} }),
+
+      recordRoomRun: (roomId, verdict, outcomes) =>
+        set((s) => {
+          const prev = s.rooms[roomId] ?? { attempts: 0, lastOutcomes: {} as Record<string, Outcome> }
+          const rank = (v: Verdict | undefined) =>
+            v === 'survived' ? 2 : v === 'survived-wounded' ? 1 : v === 'lost' ? 0 : -1
+          const firstSurvival = verdict !== 'lost' && rank(prev.bestVerdict) < 1
+          return {
+            rooms: {
+              ...s.rooms,
+              [roomId]: {
+                attempts: prev.attempts + 1,
+                bestVerdict: rank(verdict) > rank(prev.bestVerdict) ? verdict : prev.bestVerdict,
+                lastOutcomes: outcomes,
+                survivedAt: firstSurvival ? new Date().toISOString() : prev.survivedAt,
+              },
+            },
+            xp: s.xp + (firstSurvival ? XP.room : 0),
+            streakDays: touchStreak(s.streakDays),
+          }
+        }),
+
       unlockAchievement: (id) =>
         set((s) => (s.achievements.includes(id) ? s : { achievements: [...s.achievements, id] })),
 
@@ -381,14 +464,31 @@ export function selectActivityMap(s: ProgressState): Record<string, number> {
 
 /** Export the raw store as a JSON download string. */
 export function exportProgress(): string {
-  const { lessons, sims, labs, fleetWeek, capstone, xp, streakDays, achievements, settings } =
+  const { lessons, sims, labs, fleetWeek, capstone, dossier, rooms, xp, streakDays, achievements, settings } =
     useProgress.getState()
   return JSON.stringify(
-    { version: 1, lessons, sims, labs, fleetWeek, capstone, xp, streakDays, achievements, settings },
+    {
+      version: 1,
+      lessons,
+      sims,
+      labs,
+      fleetWeek,
+      capstone,
+      dossier,
+      rooms,
+      xp,
+      streakDays,
+      achievements,
+      settings,
+    },
     null,
     2,
   )
 }
+
+/** Rooms whose best verdict is anything other than a loss. */
+export const selectRoomsSurvived = (s: ProgressState) =>
+  Object.values(s.rooms).filter((r) => r.bestVerdict !== undefined && r.bestVerdict !== 'lost').length
 
 // Convenience non-hook getter for one-off reads outside React.
 export const getProgress = () => useProgress.getState()

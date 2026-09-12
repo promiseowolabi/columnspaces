@@ -122,3 +122,19 @@ export function getDesk(id: DeskId): DeskMeta | undefined {
 }
 
 export const desksForLevel = (level: Level): DeskMeta[] => DESKS.filter((d) => d.level === level)
+
+/*
+ * Reference models, one namespace each. Namespaced rather than flattened
+ * because the desks legitimately share vocabulary — `Component`, `Option`,
+ * `computeLine` — and a flat re-export would either collide or force each desk
+ * to prefix its own types with its own name, which reads worse in the models
+ * themselves. `desks.capacity.gradeCapacity(...)` says where it came from.
+ */
+export * as capacity from './capacity'
+export * as tco from './tco'
+export * as dr from './dr'
+export * as scan from './scan'
+export * as layout from './layout'
+export * as ingest from './ingest'
+export * as tenancy from './tenancy'
+export * as compaction from './compaction'
