@@ -309,7 +309,21 @@ export default function CapstonePage() {
   const dossier = useProgress((s) => s.dossier)
   const rooms = useProgress((s) => s.rooms)
   const recordSimTask = useProgress((s) => s.recordSimTask)
-  const recorded = useProgress((s) => s.sims[CAPSTONE_SIM_ID]?.tasksDone ?? [])
+  /*
+   * Select a PRIMITIVE, not a fresh array.
+   *
+   * This line used to be `s.sims[CAPSTONE_SIM_ID]?.tasksDone ?? []`. On a store
+   * where the sim has never been touched — which is every first visit — that
+   * returns a NEW array on every call, and zustand compares selector output with
+   * Object.is, so it looked changed on every render: render → new array → render.
+   * React gave up with error #185 and unmounted the tree, so the page was blank
+   * rather than wrong, which is why it looked "not built".
+   *
+   * A boolean is referentially stable. The same shape is used in Progress.tsx.
+   */
+  const done = useProgress(
+    (s) => s.sims[CAPSTONE_SIM_ID]?.tasksDone.includes(CAPSTONE_TASK_ID) ?? false,
+  )
   const [showDossier, setShowDossier] = useState(false)
 
   const overall = useMemo(() => standing(ROOMS, dossier), [dossier])
@@ -318,7 +332,6 @@ export default function CapstonePage() {
   const verdict = useMemo(() => capstoneVerdict(roomRows), [roomRows])
   const poc = useMemo(() => pocStanding(dossier), [dossier])
 
-  const done = recorded.includes(CAPSTONE_TASK_ID)
   useEffect(() => {
     if (verdict.passed && !done) recordSimTask(CAPSTONE_SIM_ID, CAPSTONE_TASK_ID)
   }, [verdict.passed, done, recordSimTask])

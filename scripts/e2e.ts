@@ -64,6 +64,13 @@ const NAV_TIMEOUT_MS = 60_000
  */
 const LAB_TIMEOUT_MS = 6 * 60_000
 
+/**
+ * Quiet time after a route renders, so an error thrown just after mount — a
+ * render loop, a rejected lazy import — is attributed to the route that caused
+ * it instead of being missed entirely.
+ */
+const SETTLE_MS = 700
+
 /* ------------------------------------------------------------ tiny helpers */
 
 const t0 = Date.now()
@@ -321,24 +328,65 @@ async function main(): Promise<void> {
       return server.origin + (p === '' ? '/' : p)
     }
 
+    /**
+     * The chrome-only text length: nav plus footer, with no route content at all.
+     * Measured once from a deliberately unrouted URL so the threshold below is
+     * derived rather than guessed — the previous hardcoded floor of 40 characters
+     * sat far below this, which is precisely why a blank route passed.
+     */
+    let chromeChars = 0
+
     const visit = async (route: string) => {
       currentRoute = route
       await page.goto(url(route), { waitUntil: 'load', timeout: NAV_TIMEOUT_MS })
-      /* Mounted means: #root has content and the Suspense fallback is gone. */
-      await page.waitForFunction(
-        () => {
-          const root = document.getElementById('root')
-          return !!root && root.childElementCount > 0 && !/^\s*loading…\s*$/.test(root.innerText.trim())
-        },
-        undefined,
-        { timeout: NAV_TIMEOUT_MS },
-      )
+
+      /*
+       * Wait for the ROUTE to render, not for the shell to mount. The lazy route
+       * chunk shows `data-route-fallback` until it resolves; the old check looked
+       * for #root's text to stop being exactly "loading…", which never happened
+       * because the fallback renders inside Layout beside the nav and footer. So
+       * every route passed instantly, on chrome-only text, and /capstone — which
+       * unmounted itself with a React render loop — passed too.
+       */
+      await page
+        .locator('[data-route-fallback]')
+        .waitFor({ state: 'detached', timeout: NAV_TIMEOUT_MS })
+
+      /*
+       * Then settle. A render loop or a failed lazy chunk throws AFTER mount, and
+       * the previous run navigated away before the error could fire — which is the
+       * second half of why this suite reported a blank page as healthy.
+       */
+      await page.waitForLoadState('networkidle', { timeout: NAV_TIMEOUT_MS }).catch(() => {})
+      await sleep(SETTLE_MS)
+
       const text = (await page.locator('#root').innerText()).trim()
-      if (text.length < 40) fail(`${route}: mounted but rendered almost nothing (${text.length} chars)`)
-      else ok(`${route} (${text.length} chars)`)
+      const headings = await page.locator('#root h1, #root h2').count()
+
+      if (text.length <= chromeChars + 200) {
+        fail(
+          `${route}: rendered ${text.length} chars, which is chrome-only (${chromeChars}) plus noise — ` +
+            'the route component produced nothing',
+        )
+      } else if (headings === 0) {
+        fail(`${route}: ${text.length} chars but no h1/h2 — the route did not render a real page`)
+      } else {
+        ok(`${route} (${text.length} chars, ${headings} headings)`)
+      }
     }
 
     /* ------------------------------------------------------------ (b) + (c) */
+
+    /*
+     * Baseline first: an unrouted path renders NotFound, whose body is tiny, so
+     * this is the nav + footer + not-found floor every real route must clear.
+     */
+    currentRoute = '/__no_such_route__'
+    await page.goto(url('/__no_such_route__'), { waitUntil: 'load', timeout: NAV_TIMEOUT_MS })
+    await page.locator('[data-route-fallback]').waitFor({ state: 'detached', timeout: NAV_TIMEOUT_MS })
+    await sleep(SETTLE_MS)
+    chromeChars = (await page.locator('#root').innerText()).trim().length
+    log(`chrome + not-found baseline: ${chromeChars} chars — every route must clear it by 200`)
 
     log('— routes —')
     for (const route of [...STATIC_ROUTES, ...SAMPLE_ROUTES]) await visit(route)

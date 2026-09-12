@@ -26,7 +26,18 @@ const NotFound = lazy(() => import('@/pages/NotFound'))
 
 function RouteFallback() {
   return (
-    <div className="mx-auto max-w-app px-6 pb-24 pt-24 lg:px-12">
+    /*
+     * `data-route-fallback` exists for the browser e2e. It used to detect the
+     * loading state by matching #root's text against /^loading…$/, which never
+     * matched because the fallback renders INSIDE Layout alongside the nav and
+     * footer — so every route "mounted" instantly, the e2e measured chrome-only
+     * text, and a route that rendered nothing at all passed. An explicit marker
+     * cannot be defeated that way.
+     */
+    <div
+      data-route-fallback
+      className="mx-auto max-w-app px-6 pb-24 pt-24 lg:px-12"
+    >
       <p className="animate-pulse font-mono text-[11px] uppercase tracking-[0.16em] text-text-3">
         loading…
       </p>
