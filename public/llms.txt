@@ -39,7 +39,7 @@ _Analytics has exactly one physical cost and everything else is a consequence of
 - [C0.L1 Bytes Scanned Is the Bill](https://promiseowolabi.github.io/columnspaces/lessons-md/c0.l1.md): Three numbers decide what analytics costs you — columns projected, blocks skipped, queries per day — and only the last one is on anybody's dashboard.
 - [C0.L2 The Unit Is Never a Value](https://promiseowolabi.github.io/columnspaces/lessons-md/c0.l2.md): You cannot read one number off a disk. Everything about columnar performance follows from what the smallest readable unit actually is.
 - [C0.L3 Three Places Bytes Live](https://promiseowolabi.github.io/columnspaces/lessons-md/c0.l3.md): Local flash, a storage fabric, object storage: the same byte count costs three different things, and only one of the three is about bandwidth.
-- [C0.L4 Pruning Is Not a Feature](https://promiseowolabi.github.io/columnspaces/lessons-md/c0.l4.md): The same query on the same engine read 39.8× more bytes because the rows arrived in a different order. Nothing was configured. Nothing was disabled.
+- [C0.L4 Pruning Is Not a Feature](https://promiseowolabi.github.io/columnspaces/lessons-md/c0.l4.md): The same query on the same engine read 64× more bytes because the rows arrived in a different order. Nothing was configured. Nothing was disabled.
 - [C0.L5 The Scan Budget](https://promiseowolabi.github.io/columnspaces/lessons-md/c0.l5.md): Finance will ask what next year costs. The answer is four numbers and one named assumption — and the assumption is the part that makes it credible.
 
 ### C1 — Encodings

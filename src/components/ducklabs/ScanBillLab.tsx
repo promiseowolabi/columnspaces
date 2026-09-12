@@ -171,9 +171,9 @@ export default function ScanBillLab({ trackColor }: { trackColor: string }) {
             code comes down, queries stay here.
           </li>
           <li>
-            · The lesson works its example at 2 billion rows; this runs 2 million. The{' '}
+            · The lesson works its example at 2 billion rows; this runs 500,000. The{' '}
             <em>ratios</em> transfer because ratios are scale-free. The absolute byte counts below are
-            about a thousandth of the lesson’s.
+            roughly a four-thousandth of the lesson’s.
           </li>
           <li>
             · <strong>Do not read a compression ratio off this fixture.</strong> Its revenue column is

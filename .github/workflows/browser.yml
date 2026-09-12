@@ -1,0 +1,61 @@
+name: Browser verification
+
+# Deliberately NOT part of the deploy workflow.
+#
+# This run needs the network: the six DuckDB labs fetch a ~33 MB engine from
+# jsDelivr at runtime, so a CDN hiccup would fail this job. Blocking a deploy on
+# somebody else's CDN is the wrong trade — but leaving the path unverified is
+# worse, because it is invisible to the 794 unit tests, which all mock the client
+# against native DuckDB.
+#
+# That gap already produced two real bugs that shipped green: an out-of-memory in
+# the fixture builder, and a `parquet_schema()` column that exists in the DuckDB
+# the tests run natively (1.5.x) and not in the one duckdb-wasm embeds (1.4.x).
+# Both broke labs for every reader. Hence: weekly, on demand, and on any change
+# to the duckdb layer or the harness.
+on:
+  workflow_dispatch:
+  schedule:
+    # Mondays, 06:00 UTC. Catches upstream drift rather than our own changes.
+    - cron: '0 6 * * 1'
+  push:
+    paths:
+      - 'src/lib/duckdb/**'
+      - 'src/components/ducklabs/**'
+      - 'scripts/e2e.ts'
+      - 'package.json'
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: build
+        run: npm run build
+
+      # The runner ships Chrome; the script never downloads a browser.
+      - name: locate a browser
+        id: browser
+        run: |
+          for c in /usr/bin/google-chrome /usr/bin/chromium-browser /usr/bin/chromium; do
+            if [ -x "$c" ]; then echo "path=$c" >> "$GITHUB_OUTPUT"; echo "using $c"; exit 0; fi
+          done
+          echo "::error::no chromium/chrome on the runner"; exit 1
+
+      # --all-labs drives all six, so engine drift in any of them fails here.
+      - name: drive the labs in a real browser
+        run: npm run e2e -- --all-labs
+        env:
+          CHROMIUM_PATH: ${{ steps.browser.outputs.path }}

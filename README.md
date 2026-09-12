@@ -75,7 +75,49 @@ npm run build       # tsc -b && vite build
 npm run lint
 npm run test
 npm run verify      # lint + build + test
+npm run e2e         # real browser, real engine — see below
 ```
+
+### `npm run e2e` — the real browser
+
+`scripts/e2e.ts` drives a production build in Chromium with Playwright. It is the
+only thing here that executes the path the duck labs actually take:
+
+```
+import('@duckdb/duckdb-wasm') → getJsDelivrBundles() → selectBundle()
+  → new Worker(blob that importScripts() the CDN worker) → instantiate(~33 MB .wasm)
+```
+
+Every unit test mocks `@/lib/duckdb/client` and runs the SQL against **native**
+DuckDB (`@duckdb/node-api`). That verifies the arithmetic and verifies nothing
+about the engine a reader gets, which is a different DuckDB version with a few
+hundred MB of address space. Both bugs this script found were invisible to 622
+green unit tests: a fixture that OOMed in wasm, and a `parquet_schema()` column
+that only exists in DuckDB 1.5.
+
+What it covers:
+
+- every non-parameterised route, plus one track, lesson, forge lab, desk and room
+- fails on any console error, unhandled rejection, failed request or 4xx/5xx
+- drives the **scan-bill** duck lab end to end: presses run, waits out the engine
+  download and the fixture build, then asserts the status reaches `done`, the
+  results table holds all five scenarios with real byte counts, and the five
+  graded observations flip to complete — then prints the numbers the engine
+  measured
+- `npm run e2e -- --all-labs` presses run on all six duck labs; the default run
+  does scan-bill only and says which labs it skipped
+
+Requirements and deliberate exclusions:
+
+- **Needs network.** The engine comes from jsDelivr, as it does for readers.
+- **Needs a build**: run `npm run build` first; the script serves `dist/`.
+- **Needs a browser it does not download**: it launches `/usr/bin/chromium`, or
+  `$CHROMIUM_PATH`. Install the `playwright` library with
+  `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`.
+- **Not part of `npm run verify`, on purpose.** A CDN hiccup must not be able to
+  block a deploy of prose. Run it when `src/lib/duckdb/**` or the labs change.
+- Slow by nature: budget several minutes. The engine is ~33 MB and the scan-bill
+  fixture writes three real Parquet files in the tab (~100 s).
 
 Routes:
 
@@ -161,19 +203,27 @@ change one number in a dossier and a different objection must appear.
 
 ### Known limitations
 
+- **No VAST cluster.** Every VAST claim is a dated, sourced `vendor` block
+  describing a mechanism; no performance figure in this course was measured by
+  us. The capstone's deliverable is therefore a proof-of-concept plan, and the
+  vendor room's severity-3 objection grades whether you can name a result that
+  would change your recommendation.
 - **Deep links answer 404 (status only).** GitHub Pages has no SPA rewrite, so
   `/lesson/c0.l1` is served as `404.html` — the body is the full app and React
   Router renders the right page, but the HTTP status is 404. Browsers do not
   care; crawlers and strict HTTP clients do. `llms.txt` therefore points agents
-  at `/lessons-md/*.md`, which return 200 and are cleaner to ingest. Moving to
-  hash routing would fix the status at the cost of uglier URLs; it has not been
-  judged worth it.
-- **Desk reference models are specs, not implementations.** The eight desks
-  publish their decision, submission shape and graded checks, and the A-track
-  lessons are written against them, but the grading models are not built yet.
-- **The rooms are a study surface until the dossier editor lands.** Every
-  objection is visible with its outcomes; the predicates that decide which ones
-  *fire* are implemented and tested, but there is no submission form yet.
+  at `/lessons-md/*.md`, which return 200. Hash routing would fix the status at
+  the cost of uglier URLs and of invalidating the published lesson URLs; it has
+  not been judged worth it.
 - **DuckDB labs need network on first run.** The engine is fetched from jsDelivr
   rather than vendored, so the deploy stays small. The lessons' arithmetic stands
   without the labs; the labs exist to let you falsify it.
+- **No DOM unit-test environment.** There is no jsdom, so components are covered
+  by typecheck, lint, pure unit tests over their models, and SSR smoke renders.
+  Real interaction coverage comes from `npm run e2e` instead, which drives a
+  actual browser — but it asserts strictly only on `scan-bill` and the two desk
+  forms it submits; the other five labs are asserted to run and advance their
+  checklists rather than to produce specific numbers.
+- **Desk grading is banded against the reference models**, not against real
+  learners producing correct-but-different reasoning — which is the only way to
+  find a band that is too tight. Inherited from vectorspace, and still true.

@@ -68,6 +68,40 @@ export interface RoomRun {
 
 export type CodeLang = 'python' | 'java' | 'rust' | 'c'
 
+/**
+ * One value out of a desk submission form. Structurally identical to
+ * `DeskValue` in `@/lib/desks/fields` and declared again here on purpose: the
+ * store is imported by every page, and importing the field registry would pull
+ * all eight reference models into the same chunk.
+ */
+export type DeskFieldValue = number | boolean | string | null
+
+/**
+ * One learner's record at a desk.
+ *
+ * A desk is graded by a pure model over the numbers submitted, so an attempt is
+ * fully determined by the value record — which is why this stores the SUBMISSION
+ * rather than a score. `lastValues` is what the form reopens with, so returning
+ * to a desk next week resumes the work rather than the scenario. `bestValues` is
+ * kept for the same reason `bestVerdict` is kept for rooms: improving a
+ * submission is the intended loop, and a worse later attempt should not erase
+ * the one that passed.
+ */
+export interface DeskRun {
+  attempts: number
+  /** Path → value of the most recent submission, exactly as the form assembled it. */
+  lastValues: Record<string, DeskFieldValue>
+  /** checkId → pass, from the most recent attempt. */
+  lastChecks: Record<string, boolean>
+  /** Most checks ever passed in one attempt, and out of how many. */
+  bestPassed: number
+  bestTotal: number
+  /** The submission that scored `bestPassed`. */
+  bestValues?: Record<string, DeskFieldValue>
+  /** ISO timestamp of the first all-passing attempt. */
+  passedAt?: string
+}
+
 export interface ProgressSettings {
   reducedMotion?: boolean
   codeLang?: CodeLang
@@ -89,6 +123,12 @@ export interface ProgressState {
   dossier: Dossier
   /** roomId → attempt record. */
   rooms: Record<string, RoomRun>
+  /**
+   * deskId → submission record. Additive: it lives in the same
+   * `columnspaces:v1` namespace, rides the same export snapshot, and its absence
+   * from an older snapshot is not an error — an import lands on an empty map.
+   */
+  desks: Record<string, DeskRun>
   xp: number
   streakDays: string[] // ISO dates with any activity
   achievements: string[]
@@ -113,6 +153,15 @@ export interface ProgressState {
   setDossier: (patch: Partial<Dossier>) => void
   clearDossier: () => void
   recordRoomRun: (roomId: string, verdict: Verdict, outcomes: Record<string, Outcome>) => void
+  /**
+   * Record one desk submission. `checks` is the desk report's own check list, so
+   * the store never re-derives a grade — it stores the one the model produced.
+   */
+  recordDeskRun: (
+    deskId: string,
+    values: Record<string, DeskFieldValue>,
+    checks: { id: string; pass: boolean }[],
+  ) => void
   unlockAchievement: (id: string) => void
   updateSettings: (patch: Partial<ProgressSettings>) => void
   importProgress: (json: string) => boolean
@@ -128,6 +177,8 @@ export const XP = {
   fleetWeekAct: 250,
   /** Surviving a Design Review room, once per room. */
   room: 250,
+  /** Passing every check at a desk, once per desk. */
+  desk: 200,
 } as const
 
 export const TOTAL_LESSONS = 37
@@ -166,6 +217,7 @@ const initialData = {
   capstone: { step: 0, stepsDone: [] as string[] },
   dossier: {} as Dossier,
   rooms: {} as Record<string, RoomRun>,
+  desks: {} as Record<string, DeskRun>,
   xp: 0,
   streakDays: [] as string[],
   achievements: [] as string[],
@@ -377,6 +429,34 @@ export const useProgress = create<ProgressState>()(
           }
         }),
 
+      recordDeskRun: (deskId, values, checks) =>
+        set((s) => {
+          const prev =
+            s.desks[deskId] ??
+            ({ attempts: 0, lastValues: {}, lastChecks: {}, bestPassed: 0, bestTotal: 0 } as DeskRun)
+          const passed = checks.filter((c) => c.pass).length
+          const total = checks.length
+          const allPassed = total > 0 && passed === total
+          const improved = passed > prev.bestPassed
+          const firstPass = allPassed && prev.passedAt === undefined
+          return {
+            desks: {
+              ...s.desks,
+              [deskId]: {
+                attempts: prev.attempts + 1,
+                lastValues: { ...values },
+                lastChecks: Object.fromEntries(checks.map((c) => [c.id, c.pass])),
+                bestPassed: improved ? passed : prev.bestPassed,
+                bestTotal: improved ? total : prev.bestTotal,
+                bestValues: improved ? { ...values } : prev.bestValues,
+                passedAt: firstPass ? new Date().toISOString() : prev.passedAt,
+              },
+            },
+            xp: s.xp + (firstPass ? XP.desk : 0),
+            streakDays: touchStreak(s.streakDays),
+          }
+        }),
+
       unlockAchievement: (id) =>
         set((s) => (s.achievements.includes(id) ? s : { achievements: [...s.achievements, id] })),
 
@@ -464,8 +544,20 @@ export function selectActivityMap(s: ProgressState): Record<string, number> {
 
 /** Export the raw store as a JSON download string. */
 export function exportProgress(): string {
-  const { lessons, sims, labs, fleetWeek, capstone, dossier, rooms, xp, streakDays, achievements, settings } =
-    useProgress.getState()
+  const {
+    lessons,
+    sims,
+    labs,
+    fleetWeek,
+    capstone,
+    dossier,
+    rooms,
+    desks,
+    xp,
+    streakDays,
+    achievements,
+    settings,
+  } = useProgress.getState()
   return JSON.stringify(
     {
       version: 1,
@@ -476,6 +568,7 @@ export function exportProgress(): string {
       capstone,
       dossier,
       rooms,
+      desks,
       xp,
       streakDays,
       achievements,
@@ -485,6 +578,10 @@ export function exportProgress(): string {
     2,
   )
 }
+
+/** Desks where every check passed at least once. */
+export const selectDesksPassed = (s: ProgressState) =>
+  Object.values(s.desks).filter((d) => d.passedAt !== undefined).length
 
 /** Rooms whose best verdict is anything other than a loss. */
 export const selectRoomsSurvived = (s: ProgressState) =>

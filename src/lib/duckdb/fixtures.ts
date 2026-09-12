@@ -25,8 +25,30 @@
 
 import { exec, query } from './client'
 
-/** Rows in the generated fact table. Sized to load in a second or two. */
-export const FIXTURE_ROWS = 2_000_000
+/**
+ * Rows in the generated fact table.
+ *
+ * ── Why this is 500k and not 2M ────────────────────────────────────────────
+ * It was 2,000,000, which nothing had ever executed in a browser: every unit
+ * test builds this fixture natively (`@duckdb/node-api`, 40k rows, gigabytes of
+ * host RAM), so the number was only ever checked against an engine that could
+ * afford it. `npm run e2e` ran it in Chromium for the first time and it died
+ * with `Out of Memory Error: Allocation failure` while writing the second
+ * Parquet file.
+ *
+ * The budget it has to fit inside, measured rather than assumed:
+ *   · duckdb-wasm reports `memory_limit` = 3.1 GiB, but that only accounts for
+ *     the buffer manager. The Parquet files live in duckdb's in-memory virtual
+ *     filesystem, in the SAME wasm32 heap, and are not counted.
+ *   · At 2M rows one file holds 408 MiB of column chunks, and three of them plus
+ *     the writer's own buffers do not fit.
+ *
+ * At 500k rows each file is ~102 MiB, all three fit with room to spare, and the
+ * whole build takes ~100 s in a tab. The ratios — projection, pruning,
+ * compression — are scale-free and unchanged; only the absolute byte counts
+ * shrink, which the labs already say out loud.
+ */
+export const FIXTURE_ROWS = 500_000
 
 /** The seed. Same xorshift lineage as every other seeded thing in the series. */
 export const FIXTURE_SEED = 0x9e37_79b9
@@ -63,13 +85,30 @@ const padSelect = (): string =>
  * loader produces, and the one that prunes.
  *
  * `orders_shuffled` holds the SAME rows in an order that destroys clustering.
- * Two tables rather than one is the whole point: the difference between them is
- * not compression, not the query, and not the engine. It is only the order the
- * rows were written in, and it is worth a factor of ten in bytes read.
+ * Two relations rather than one is the whole point: the difference between them
+ * is not compression, not the query, and not the engine. It is only the order the
+ * rows were written in, and it is worth orders of magnitude in bytes read.
+ *
+ * ── Why these are VIEWS, and why the shuffle sorts an index ────────────────
+ * They used to be `CREATE TABLE`s. Materialising them cost 930 MiB each — 1.8 GiB
+ * of a wasm32 heap — before a single Parquet file had been written, and that is
+ * what made this lab die in a real browser. Nothing needs the rows in memory:
+ * every duck lab reads the Parquet FILES, so the tables were only ever an
+ * expensive staging area on the way to `COPY`.
+ *
+ * As views, `COPY` streams: DuckDB generates a vector, encodes it, writes it,
+ * and forgets it. Accounted memory stays at zero for the entire build.
+ *
+ * The shuffle needs more care, because `ORDER BY` over 360-byte rows is a
+ * 930 MiB sort no matter how the rows are stored. So the sort is over the row
+ * INDEX only — 8 bytes per row, a few MiB — and the wide row is generated after
+ * the reordering, from the reordered index. Same rows, same shuffle key, same
+ * resulting file; a hundredth of the sort buffer. Which is late materialization,
+ * the subject of C4.L3, applied to the fixture that teaches it.
  */
 export const FIXTURE_SQL = {
   base: `
-CREATE OR REPLACE TABLE orders_clustered AS
+CREATE OR REPLACE VIEW orders_clustered AS
 SELECT
   TIMESTAMP '2024-01-01 00:00:00' + INTERVAL (i * ${FIXTURE_DAYS} * 86400 / ${FIXTURE_ROWS}) SECOND AS order_ts,
   ['EMEA','NA','APAC','LATAM','UK','DACH','NORDIC','ANZ'][((hash(i + ${FIXTURE_SEED}) % 8)::BIGINT) + 1] AS region,
@@ -79,9 +118,25 @@ SELECT
 ${padSelect()}
 FROM range(${FIXTURE_ROWS}) t(i);
 `,
+  /*
+   * The same generator, reading a permuted index. The shuffle key is the same
+   * one the clustered/shuffled pair has always used — a hash of customer_id —
+   * so rows of one customer still land together and nothing about time survives.
+   */
   shuffled: `
-CREATE OR REPLACE TABLE orders_shuffled AS
-SELECT * FROM orders_clustered ORDER BY hash(customer_id * 31 + ${FIXTURE_SEED});
+CREATE OR REPLACE VIEW orders_shuffled AS
+SELECT
+  TIMESTAMP '2024-01-01 00:00:00' + INTERVAL (i * ${FIXTURE_DAYS} * 86400 / ${FIXTURE_ROWS}) SECOND AS order_ts,
+  ['EMEA','NA','APAC','LATAM','UK','DACH','NORDIC','ANZ'][((hash(i + ${FIXTURE_SEED}) % 8)::BIGINT) + 1] AS region,
+  ((hash(i * 3 + ${FIXTURE_SEED}) % 90000) / 100.0)::DOUBLE AS net_revenue,
+  (hash(i * 5 + ${FIXTURE_SEED}) % 250000)::INTEGER AS customer_id,
+  ['new','paid','shipped','refunded'][((hash(i * 11 + ${FIXTURE_SEED}) % 4)::BIGINT) + 1] AS status,
+${padSelect()}
+FROM (
+  SELECT i
+  FROM range(${FIXTURE_ROWS}) t(i)
+  ORDER BY hash(((hash(i * 5 + ${FIXTURE_SEED}) % 250000)::INTEGER) * 31 + ${FIXTURE_SEED})
+) s(i);
 `,
 }
 
@@ -96,23 +151,32 @@ export interface ParquetFixture {
   why: string
 }
 
+/**
+ * Row-group sizes are multiples of 2048, DuckDB's vector size, because the
+ * writer rounds to vector multiples: ask for 2,500 and you get 4,096, which
+ * would quietly make the "10× more row groups" file only 5× finer. 20,480 and
+ * 2,048 are exactly a factor of ten apart and are exactly what gets written.
+ *
+ * At 500k rows that is 25 row groups and 245 row groups — enough that a
+ * seven-day window out of two years can skip almost all of them.
+ */
 export const PARQUET_FIXTURES: ParquetFixture[] = [
   {
     path: 'clustered.parquet',
-    label: 'clustered · 100k row groups',
-    rowGroupSize: 100_000,
+    label: 'clustered · 20k row groups',
+    rowGroupSize: 20_480,
     why: 'Written in timestamp order. Each row group covers a narrow time range, so a time predicate can skip most of them.',
   },
   {
     path: 'shuffled.parquet',
-    label: 'shuffled · 100k row groups',
-    rowGroupSize: 100_000,
+    label: 'shuffled · 20k row groups',
+    rowGroupSize: 20_480,
     why: 'The same rows, written in an order unrelated to time. Every row group spans nearly the whole history, so nothing can be skipped.',
   },
   {
     path: 'clustered-small.parquet',
-    label: 'clustered · 10k row groups',
-    rowGroupSize: 10_000,
+    label: 'clustered · 2k row groups',
+    rowGroupSize: 2_048,
     why: 'Clustered, but ten times more row groups: finer pruning, more metadata. The lesson is that this dial has two edges.',
   },
 ]
@@ -120,9 +184,11 @@ export const PARQUET_FIXTURES: ParquetFixture[] = [
 let loaded = false
 
 /**
- * Build the tables and write the Parquet files. Idempotent per tab.
+ * Declare the two relations and write the Parquet files. Idempotent per tab.
  *
- * `onStep` exists because this takes a few seconds and silence reads as a hang.
+ * `onStep` exists because this takes a minute or two and silence reads as a hang.
+ * The finest-grained file is the slow one: ten times the row groups means ten
+ * times the column chunks to encode and describe, and duckdb-wasm has one thread.
  */
 export async function loadFixtures(onStep?: (s: string) => void): Promise<void> {
   if (loaded) {
@@ -130,12 +196,17 @@ export async function loadFixtures(onStep?: (s: string) => void): Promise<void> 
     return
   }
 
-  onStep?.(`generating ${FIXTURE_ROWS.toLocaleString('en-US')} rows`)
+  onStep?.(`declaring the generator for ${FIXTURE_ROWS.toLocaleString('en-US')} rows`)
   await exec(FIXTURE_SQL.base)
 
-  onStep?.('writing the same rows in a non-clustered order')
+  onStep?.('declaring the same rows in a non-clustered order')
   await exec(FIXTURE_SQL.shuffled)
 
+  /*
+   * Each COPY streams straight out of the view: no table is ever materialised,
+   * so peak memory is one vector plus the file being written. That is the whole
+   * difference between this running in a tab and failing in one.
+   */
   for (const f of PARQUET_FIXTURES) {
     onStep?.(`writing ${f.path}`)
     const source = f.path.startsWith('shuffled') ? 'orders_shuffled' : 'orders_clustered'

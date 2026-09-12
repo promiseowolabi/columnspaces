@@ -473,22 +473,63 @@ merely passing a gate, which is the only evidence that the machinery is real:
   inside `verify` and in CI, with freshness guards for both the agent surface and
   the manifest.
 
+### The two gaps that were worth closing, and what closing them found
+
+**Desk submission forms.** The eight models were graded by 115 tests before a
+learner could submit to them, which was the widest gap between what the
+architecture half claimed and what it did. Now: a per-desk field registry
+(prose labels, entry units, and for the discipline terms the check id that fails
+on a blank), a form that assembles the model's nested submission from flat
+inputs, the report rendered check by check in the model's own diagnostic words,
+persistence in the existing snapshot, and an explicit action to copy a passing
+result into the dossier — so the rooms attack numbers the learner actually
+produced, which is the arc the architecture half is built on. 172 new tests,
+including registry coverage in both directions so a model change cannot create
+an unfillable form.
+
+**Real browser verification, which is the one that paid.** Six DuckDB labs rest
+on duckdb-wasm instantiating from a CDN through a blob worker, and no test had
+ever executed that path — they all mock the client against native DuckDB. Driving
+it in Chromium found **two bugs that made labs fail for every reader while 794
+tests stayed green**:
+
+1. `scan-bill` died with an out-of-memory on first run. The engine was fine; the
+   fixture was not. duckdb-wasm reports a ~3.1 GiB limit that covers the buffer
+   manager but not the in-memory virtual filesystem, and building two 2M-row
+   relations reached 1.8 GiB before a file was written. Fixed by making both
+   relations views so each COPY streams, sorting an 8-byte row index instead of
+   360-byte rows (late materialization — the subject of C4.L3), dropping to
+   500,000 rows, and vector-aligning the row-group sizes, because asking for
+   2,500 silently yielded 4,096 and made the "10× finer" file only 5× finer.
+2. `parquet-anatomy` died with a binder error. duckdb-wasm 1.32.0 embeds DuckDB
+   1.4.3, whose `parquet_schema()` has no `column_id`; the unit suite runs 1.5.5
+   natively, so the query was valid there and invalid in every reader's browser.
+   No test referenced it, so it had never executed anywhere.
+
+Because the fixture changed scale, the numbers three C0 lessons quoted were no
+longer what a reader would see. They now quote the browser-measured values —
+**19× projection, 96% pruned, 1,103× total, 64× more bytes shuffled** — verified
+first-hand by `npm run e2e`, which prints them.
+
+`.github/workflows/browser.yml` runs this weekly, on demand, and on any change to
+the duckdb layer, driving all six labs. It is deliberately outside the deploy
+gate: blocking a deploy on somebody else's CDN is the wrong trade, but leaving
+the path unverified is worse.
+
 ### Known limitations (documented, not hidden)
 
 - **No VAST cluster.** Every VAST claim is a dated, sourced `vendor` block
   describing a mechanism; no performance figure in this course was measured by
   us. The capstone's final deliverable is a proof-of-concept plan, and the vendor
   room's severity-3 objection grades whether the reader can name one.
-- **Desk submission forms are not built.** The eight models are implemented and
-  tested; the in-page forms that feed them are not. The A-track lessons teach the
-  arithmetic each desk checks.
 - **Deep links answer HTTP 404** (correct page in the body) — GitHub Pages has no
-  SPA rewrite. `llms.txt` points agents at `/lessons-md/`, which returns 200.
-- **No DOM test environment.** Components are covered by typecheck, lint, pure
-  unit tests and SSR smoke renders; there is no jsdom, so interaction paths are
-  not click-tested. Two duck-lab panels that need duckdb-wasm's virtual
-  filesystem (corruption and expiry) degrade visibly rather than silently and
-  want one manual browser pass.
+  SPA rewrite. `llms.txt` points agents at `/lessons-md/`, which returns 200. The
+  only fix is hash routing, which trades correct status codes for uglier URLs and
+  would invalidate the published lesson URLs.
+- **No DOM unit-test environment.** Components are covered by typecheck, lint,
+  pure unit tests and SSR smoke renders; interaction coverage comes from the
+  browser e2e instead, which asserts strictly on `scan-bill` and two desk forms
+  and asserts only "ran and advanced" for the other five labs.
 - **Desk bands are self-consistent by construction** — calibrated against the
   reference models, not against real learners producing correct-but-different
   reasoning. Inherited from vectorspace, and still true.

@@ -649,6 +649,13 @@ describe('tenancy-desk', () => {
     expect(w.msg).toMatch(/A cap equal to the pool is not a cap/)
   })
 
+  /*
+   * 180 model runs, the largest of them drawing 5,000 Zipf tenants through the
+   * shared bigint xorshift — a second and a half of real work. The explicit
+   * timeout is here because the default 5s is measured against a machine that is
+   * also transforming and running every other suite in parallel, and this test
+   * was close enough to the line to fail on a cold cache rather than on a bug.
+   */
   it('is pure, deterministic, seed-stable and finite across a sweep', () => {
     expectPure('modelTenancy', tenancy.modelTenancy, input)
     /* Same seed, same tenants — every learner sees the same population. */
@@ -667,7 +674,7 @@ describe('tenancy-desk', () => {
         }
       }
     }
-  })
+  }, 30_000)
 })
 
 /* =============================== compaction =============================== */

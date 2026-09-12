@@ -6,17 +6,21 @@
  * renders the registry: the decision each desk stands in for, what the learner
  * submits, and the checks it grades.
  *
- * The reference models and the submission forms land in phase 6 (PLAN.md). The
- * metadata is shown now because it is the contract the A1/A2 lessons are
- * written against — a lesson may only promise what a desk actually grades.
+ * The reference models live in src/lib/desks/ and the submission form is
+ * src/components/DeskSubmission.tsx. The
+ * metadata below the form is the contract the A1/A2 lessons are written
+ * against — a lesson may only promise what a desk actually grades.
  */
 
 import { Link, useParams } from 'react-router'
 import { Calculator, ChevronLeft } from 'lucide-react'
 import { DESKS, getDesk } from '@/lib/desks'
+import { DeskSubmission } from '@/components/DeskSubmission'
+import { useProgress } from '@/lib/progress'
 import type { DeskId } from '@/data/lessons/types'
 
 function DeskIndex() {
+  const desks = useProgress((s) => s.desks)
   return (
     <div className="mx-auto max-w-app px-6 pb-24 pt-24 lg:px-12">
       <p className="font-mono text-label uppercase tracking-[0.16em] text-text-3">the architecture half</p>
@@ -40,6 +44,11 @@ function DeskIndex() {
             </div>
             <p className="mt-1.5 max-w-prose text-body-sm text-text-2">{d.decision}</p>
             <p className="mt-2 font-mono text-[11px] text-text-3">grades — {d.checks.join(' · ')}</p>
+            <p className="mt-1 font-mono text-[11px] text-text-3">
+              {desks[d.id]
+                ? `${desks[d.id].attempts} attempt${desks[d.id].attempts === 1 ? '' : 's'} · best ${desks[d.id].bestPassed}/${desks[d.id].bestTotal}${desks[d.id].passedAt ? ' · passed' : ''}`
+                : 'not submitted'}
+            </p>
           </Link>
         ))}
       </div>
@@ -94,13 +103,13 @@ function DeskDetail({ id }: { id: DeskId }) {
       </section>
 
       <p className="mt-10 max-w-prose text-body-sm text-text-3">
-        The reference model for this desk is implemented in <code>src/lib/desks/</code> and graded in
-        tolerance bands — a sizing model is not correct, it is within tolerance and honestly caveated.
-        Several of the checks above fail on an <em>omission</em> even when the point estimate is perfect,
-        because the term you left out is the failure mode. The in-page submission form is not built yet;
-        until it is, the desks are gradeable from their models and the A1/A2 lessons teach the arithmetic
-        each one checks.
+        The reference model for this desk is implemented in <code>src/lib/desks/</code> and graded in tolerance
+        bands — a sizing model is not correct, it is within tolerance and honestly caveated. Several of the checks
+        above fail on an <em>omission</em> even when the point estimate is perfect, because the term you left out
+        is the failure mode. Submit below and the report comes back check by check, in the model’s own words.
       </p>
+
+      <DeskSubmission desk={desk} />
     </div>
   )
 }

@@ -76,10 +76,10 @@ export const LESSON_META: LessonMeta[] = [
     index: 4,
     title: "Pruning Is Not a Feature",
     minutes: 15,
-    hook: "The same query on the same engine read 39.8× more bytes because the rows arrived in a different order. Nothing was configured. Nothing was disabled.",
+    hook: "The same query on the same engine read 64× more bytes because the rows arrived in a different order. Nothing was configured. Nothing was disabled.",
     exercise: "quiz",
     artifact: "layout-design",
-    takeaway: { number: "39.8×", claim: "Identical query, identical format, identical engine: the shuffled file read 39.8× more bytes than the clustered one, because pruning is a property of physical order rather than of the format." },
+    takeaway: { number: "64×", claim: "Identical query, identical format, identical engine: the shuffled file read 64× more bytes than the clustered one, because pruning is a property of physical order rather than of the format." },
     blockKinds: ["callout", "deepdive", "diagram", "isomorphism", "prose", "quiz", "statline"],
   },
   {

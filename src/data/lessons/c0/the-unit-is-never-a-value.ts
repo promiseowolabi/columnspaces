@@ -36,7 +36,7 @@ Open any modern columnar file — Parquet, ORC, a proprietary equivalent — and
 | **column chunk** | one column's values within one row group, stored contiguously | entire columns, via projection |
 | **page** | the smallest independently decodable unit inside a chunk | fine-grained ranges, and it bounds decode work |
 
-The nesting is what makes projection *physical* rather than a filter applied late. A column chunk is a **contiguous byte range** at a known offset. Reading three columns of sixty means issuing reads for three byte ranges and never touching the other fifty-seven. That is the whole trick, and it is why C0.L1's 18.7× projection factor is available without any cleverness: it is a consequence of where the bytes were placed.
+The nesting is what makes projection *physical* rather than a filter applied late. A column chunk is a **contiguous byte range** at a known offset. Reading three columns of sixty means issuing reads for three byte ranges and never touching the other fifty-seven. That is the whole trick, and it is why C0.L1's 19× projection factor is available without any cleverness: it is a consequence of where the bytes were placed.
 
 Note carefully that **row groups cut across all columns.** They have to: reassembling a row requires taking the nth value from every column chunk, which only works if every chunk in a group covers the same rows. This is why pruning is decided per row group and never per column — a fact worth holding on to, because implementing it wrong produces impossible-looking pruning ratios, and forge lab 02 grades exactly this.`,
     },
@@ -98,7 +98,7 @@ Note carefully that **row groups cut across all columns.** They have to: reassem
 
 Row group size is the one layout parameter that reliably gets set wrong, in both directions, for the same reason: people optimise the edge they have recently been burned by.
 
-**Make row groups smaller** and statistics get finer, so pruning gets sharper. In the C0.L1 lab, the fixture at 100,000 rows per group produced 20 groups and a seven-day window landed in exactly one of them — 95% skipped. Cut the group size to 10,000 and you get 200 groups: the same window now lands in one or two of 200, so you read a tenth as much data.
+**Make row groups smaller** and statistics get finer, so pruning gets sharper. In the C0.L1 lab, the fixture at 20,480 rows per group produces 25 groups, and a seven-day window lands in exactly one of them — 96% skipped. Cut the group size to 2,048 and you get 245 groups: the same window now touches 3 of them, 98.8% skipped, and the scan reads about half as many bytes.
 
 **But** every row group multiplies metadata. Statistics exist *per column per row group*, so 200 groups over 45 columns is 9,000 statistics entries in the footer instead of 900. The planner reads and evaluates all of them before touching data. Push this far enough and planning dominates execution — which is Column Week's second incident, where a table with 1.4M live files spends most of its time deciding what to read.
 
@@ -115,9 +115,9 @@ So the dial trades **pruning precision** against **metadata volume and compressi
           hint: 'File, row group, column chunk, page. Each one exists to make a different decision avoidable.',
         },
         {
-          value: '20 → 200',
+          value: '25 → 245',
           label: 'row groups when you cut group size 10×',
-          hint: 'Measured on the course fixture: 2M rows at 100k per group is 20 groups; at 10k it is 200.',
+          hint: 'Measured on the course fixture: 500k rows at 20,480 per group is 25 groups; at 2,048 it is 245. Ask for a size the engine cannot honour and it will round to its vector width.',
         },
         {
           value: '45 × N',
@@ -127,7 +127,7 @@ So the dial trades **pruning precision** against **metadata volume and compressi
         {
           value: '1',
           label: 'row groups a 7-day window touched',
-          hint: 'Out of 20, on the clustered fixture. The same window on the shuffled fixture touched all 20.',
+          hint: 'Out of 25, on the clustered fixture. The same window on the shuffled fixture touched all 25.',
         },
       ],
     },

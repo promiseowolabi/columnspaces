@@ -59,7 +59,7 @@ Now price it under two layouts, using nothing but the arithmetic above.
 
 That is the arc of this course in one example: **800 GB → 56 GB → single-digit GB**, same data, same answer, same SQL. Three orders of magnitude, and not one of the steps was a hardware decision.
 
-The lab below runs exactly this comparison on a real columnar engine, at 1/1000 scale. When I ran it while writing this lesson it reported a **projection factor of 18.7×** and **95% of row groups pruned** — a 685× total — with the identical query reading **39.8× more bytes** once the rows were written in a different order. Your numbers should land near those; if they do not, one of us has learned something.`,
+The lab below runs exactly this comparison on a real columnar engine, on 500,000 rows rather than 2 billion. Run in a browser, it reports a **projection factor of 19×** and **96% of row groups pruned** — a **1,103× total** — with the identical query reading **64× more bytes** once the rows were written in a different order. Your numbers should match those closely, because the fixture is seeded; if they do not, one of us has learned something.`,
     },
     {
       type: 'statline',
@@ -75,14 +75,14 @@ The lab below runs exactly this comparison on a real columnar engine, at 1/1000 
           hint: '400 ÷ 28. Before compression, before pruning — this is what the layout gives you for free.',
         },
         {
-          value: '95%',
+          value: '96%',
           label: 'row groups skipped unread',
-          hint: 'Measured, not assumed: a seven-day window on a table clustered by time, in the lab below. Blocks whose max predates the predicate are never opened.',
+          hint: 'Measured in a browser, not assumed: 1 of 25 row groups read for a seven-day window on a table clustered by time. Blocks whose max predates the predicate are never opened.',
         },
         {
-          value: '685×',
+          value: '1,103×',
           label: 'the factors multiplied',
-          hint: 'Measured in the lab: 18.7x projection times 20x pruning. They act on different terms of the same product, which is why they multiply rather than add.',
+          hint: 'Measured in the lab: 19x projection times 58x pruning. They act on different terms of the same product, which is why they multiply rather than add.',
         },
       ],
     },
@@ -141,7 +141,7 @@ So the first question to ask about any analytical workload is not "is it fast" b
         },
         {
           caption:
-            'Cluster the table on order_ts and keep min/max per block. Now the predicate can be answered against metadata: a block whose max timestamp predates the window cannot contain a match, so it is skipped unread. The lab below measures 95% skipped — a further 20×, and the two factors multiply because they act on different terms.',
+            'Cluster the table on order_ts and keep min/max per block. Now the predicate can be answered against metadata: a block whose max timestamp predates the window cannot contain a match, so it is skipped unread. The lab below measures 96% skipped — 1 row group of 25, a further 58×, and the two factors multiply because they act on different terms.',
           active: ['prune', 'need'],
           edges: ['proj->prune', 'prune->need'],
         },

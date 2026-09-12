@@ -7,25 +7,25 @@ const lesson: Lesson = {
   index: 4,
   title: 'Pruning Is Not a Feature',
   minutes: 15,
-  hook: 'The same query on the same engine read 39.8× more bytes because the rows arrived in a different order. Nothing was configured. Nothing was disabled.',
+  hook: 'The same query on the same engine read 64× more bytes because the rows arrived in a different order. Nothing was configured. Nothing was disabled.',
   exercise: 'quiz',
   artifact: 'layout-design',
   takeaway: {
-    number: '39.8×',
+    number: '64×',
     claim:
-      'Identical query, identical format, identical engine: the shuffled file read 39.8× more bytes than the clustered one, because pruning is a property of physical order rather than of the format.',
+      'Identical query, identical format, identical engine: the shuffled file read 64× more bytes than the clustered one, because pruning is a property of physical order rather than of the format.',
   },
   blocks: [
     {
       type: 'prose',
-      md: `Here is the measurement from C0.L1's lab, run while writing this course. Same 2 million rows. Same three-column projection. Same seven-day predicate. Same engine, same Parquet, same compression codec, same row group size.
+      md: `Here is the measurement from C0.L1's lab, run in a browser. Same 500,000 rows. Same three-column projection. Same seven-day predicate. Same engine, same Parquet, same compression codec, same row group size.
 
 | file | row groups read | pruned | bytes read |
 |---|---|---|---|
-| written in timestamp order | 1 of 20 | 95.0% | 0.06 MiB |
-| the same rows, written shuffled | 20 of 20 | 0.0% | 2.36 MiB |
+| written in timestamp order | 1 of 25 | 96.0% | 94 KiB |
+| the same rows, written shuffled | 25 of 25 | 0.0% | 5.9 MiB |
 
-**39.8× more bytes to answer an identical question.** No setting differs. No feature was switched off. The only difference is the order the rows were physically written in — and that order was decided by an upstream process that has no idea this query exists.
+**64× more bytes to answer an identical question.** No setting differs. No feature was switched off. The only difference is the order the rows were physically written in — and that order was decided by an upstream process that has no idea this query exists.
 
 This is why the sentence "the engine handles pruning automatically" is one of the more expensive things a person can believe. The engine will skip every block it can *prove* cannot match. Whether that is 95% of them or none of them is decided by your layout, upstream of the engine entirely.`,
     },
@@ -55,13 +55,13 @@ This generalises past timestamps. Any predicate prunes in proportion to how well
         { id: 'c0', x: 2, y: 18, w: 15, h: 8, label: 'blk 0', sub: 'Jan–Feb 24', color: '#94A3B8' },
         { id: 'c1', x: 19, y: 18, w: 15, h: 8, label: 'blk 1', sub: 'Mar–Apr 24', color: '#94A3B8' },
         { id: 'c2', x: 36, y: 18, w: 15, h: 8, label: '… 17 more', sub: 'all older', color: '#94A3B8' },
-        { id: 'c3', x: 53, y: 18, w: 15, h: 8, label: 'blk 19', sub: 'Dec 25–31', color: '#3EF2A4' },
-        { id: 'cwin', x: 72, y: 18, w: 26, h: 8, label: '1 of 20 read', sub: '95% skipped', color: '#3EF2A4' },
+        { id: 'c3', x: 53, y: 18, w: 15, h: 8, label: 'blk 24', sub: 'Dec 25–31', color: '#3EF2A4' },
+        { id: 'cwin', x: 72, y: 18, w: 26, h: 8, label: '1 of 25 read', sub: '96% skipped', color: '#3EF2A4' },
         { id: 's0', x: 2, y: 36, w: 15, h: 8, label: 'blk 0', sub: 'Jan 24–Dec 25', color: '#FB7185' },
         { id: 's1', x: 19, y: 36, w: 15, h: 8, label: 'blk 1', sub: 'Jan 24–Dec 25', color: '#FB7185' },
         { id: 's2', x: 36, y: 36, w: 15, h: 8, label: '… 17 more', sub: 'same range', color: '#FB7185' },
-        { id: 's3', x: 53, y: 36, w: 15, h: 8, label: 'blk 19', sub: 'Jan 24–Dec 25', color: '#FB7185' },
-        { id: 'swin', x: 72, y: 36, w: 26, h: 8, label: '20 of 20 read', sub: '0% skipped', color: '#FB7185' },
+        { id: 's3', x: 53, y: 36, w: 15, h: 8, label: 'blk 24', sub: 'Jan 24–Dec 25', color: '#FB7185' },
+        { id: 'swin', x: 72, y: 36, w: 26, h: 8, label: '25 of 25 read', sub: '0% skipped', color: '#FB7185' },
         { id: 'note', x: 12, y: 52, w: 76, h: 10, label: 'the statistics are correct in both rows', sub: 'a min/max pair only carries information when values sit near each other', color: '#FBBF24' },
       ],
       edges: [
@@ -91,7 +91,7 @@ This generalises past timestamps. Any predicate prunes in proportion to how well
         },
         {
           caption:
-            'Both sets of statistics are accurate. The second set is merely uninformative — which is the point: pruning is not something the format provides, it is something physical clustering makes available. 39.8× in bytes, from write order alone.',
+            'Both sets of statistics are accurate. The second set is merely uninformative — which is the point: pruning is not something the format provides, it is something physical clustering makes available. 64× in bytes, from write order alone.',
           active: ['note'],
           edges: ['swin->note'],
         },
@@ -122,7 +122,7 @@ It is also why "pruning stopped working" is a cost incident rather than an outag
           hint: 'Measured on the course fixture. Same rows, same query, same engine — only the write order differs.',
         },
         {
-          value: '39.8×',
+          value: '64×',
           label: 'more bytes read by the shuffled file',
           hint: 'For an identical query and an identical answer. This is the cost of a layout decision made by somebody else, upstream.',
         },

@@ -375,18 +375,47 @@ export async function fileLevel(path: string): Promise<FileLevel> {
  * count); the rest are the leaves the reader actually queries. Repetition type is
  * included because it is the field that decides whether a column needs definition
  * levels at all — the single most commonly skipped part of the format.
+ *
+ * ── Why there are two shapes ───────────────────────────────────────────────
+ * `parquet_schema()` grew a `column_id` column in DuckDB 1.5. duckdb-wasm 1.32.0
+ * embeds DuckDB **1.4.3**, which has `field_id` and no `column_id`, so the query
+ * below — written against the native 1.5.5 the unit suite uses — failed in every
+ * reader's browser with
+ *
+ *     Binder Error: Column "column_id" referenced that exists in the SELECT
+ *     clause - but this column cannot be referenced before it is defined
+ *
+ * (the binder finds no input column of that name, so it resolves the reference to
+ * the output alias being defined, and rejects it). `npm run e2e` is what found
+ * this; nothing else could, because the mocks run the native engine.
+ *
+ * The same candidate-list tolerance `fileLevel` already applies to `footer_size`
+ * applies here. The fallback synthesises the position: `parquet_schema()` returns
+ * rows in schema order — root first, then leaves — on both versions.
  */
-export const schemaSql = (path: string): string => `
-    SELECT name,
-           type,
-           duckdb_type,
-           repetition_type,
-           num_children::BIGINT AS num_children,
-           logical_type,
-           column_id::BIGINT    AS column_id
-    FROM parquet_schema('${path}')
-    ORDER BY column_id
-  `
+export const SCHEMA_SQL_CANDIDATES: string[] = [
+  `SELECT name,
+          type,
+          duckdb_type,
+          repetition_type,
+          num_children::BIGINT AS num_children,
+          logical_type,
+          column_id::BIGINT    AS column_id
+   FROM parquet_schema('%FILE%')
+   ORDER BY column_id`,
+  `SELECT name,
+          type,
+          duckdb_type,
+          repetition_type,
+          num_children::BIGINT AS num_children,
+          logical_type,
+          (row_number() OVER () - 1)::BIGINT AS column_id
+   FROM parquet_schema('%FILE%')`,
+]
+
+/** The preferred shape, kept exported: DuckDB 1.5+ answers it directly. */
+export const schemaSql = (path: string): string =>
+  SCHEMA_SQL_CANDIDATES[0].replace('%FILE%', path)
 
 export interface SchemaEntry {
   name: string
@@ -399,14 +428,28 @@ export interface SchemaEntry {
 }
 
 export async function schemaLevel(path: string): Promise<SchemaEntry[]> {
-  const rows = await query<{
+  type Row = {
     name: string
     type: string | null
     duckdb_type: string | null
     repetition_type: string | null
     num_children: number | null
     logical_type: string | null
-  }>(schemaSql(path))
+  }
+
+  let rows: Row[] | null = null
+  let lastError: unknown = null
+  for (const candidate of SCHEMA_SQL_CANDIDATES) {
+    try {
+      rows = await query<Row>(candidate.replace('%FILE%', path))
+      break
+    } catch (e) {
+      /* This build spells the schema columns differently. Try the next shape. */
+      lastError = e
+    }
+  }
+  if (rows === null) throw lastError instanceof Error ? lastError : new Error(String(lastError))
+
   return rows.map((r) => ({
     name: r.name,
     parquetType: r.type,
