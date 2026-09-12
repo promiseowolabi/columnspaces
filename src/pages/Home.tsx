@@ -1,11 +1,13 @@
 import { Link } from 'react-router'
 import { motion } from 'framer-motion'
 import { ArrowRight, Gavel, Hammer, Warehouse } from 'lucide-react'
-import { TRACKS } from '@/lib/tracks'
+import { TRACKS, TOTAL_TRACK_LESSONS, ORDERED_LESSON_IDS } from '@/lib/tracks'
 import TrackCard from '@/components/TrackCard'
 import { FORGE_LABS } from '@/data/labs'
 import { DESKS } from '@/lib/desks'
 import { ROOMS } from '@/data/rooms'
+import { DRILLS } from '@/data/drills'
+import { DUCK_LABS } from '@/data/duck-labs'
 
 export default function Home() {
   const objections = ROOMS.reduce((n, r) => n + r.objections.length, 0)
@@ -27,14 +29,15 @@ export default function Home() {
           <span className="text-accent">Learn to read it. Then design against it.</span>
         </h1>
         <p className="mx-auto mt-6 max-w-xl text-body-lg text-text-2">
-          Two halves. Build the columnar layer — encodings, pruning, table formats, vectorized
-          execution — as Rust labs graded in your browser, and check every claim against a real
+          {TOTAL_TRACK_LESSONS} lessons across {TRACKS.length} tracks, in two halves. Build the
+          columnar layer — encodings, pruning, table formats, vectorized execution — as{' '}
+          {FORGE_LABS.length} Rust labs graded in your browser, and check every claim against a real
           columnar engine running in the tab. Then architect a platform on it and defend the numbers
           to a CFO, a hostile principal and a vendor. No servers, no accounts.
         </p>
         <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
           <Link
-            to="/lesson/c0.l1"
+            to={`/lesson/${ORDERED_LESSON_IDS[0]}`}
             className="inline-flex items-center gap-2 rounded-md border border-accent/60 bg-accent/10 px-5 py-2.5 font-mono text-sm text-accent transition-colors hover:bg-accent/20"
           >
             start the curriculum <ArrowRight className="h-4 w-4" />
@@ -53,6 +56,12 @@ export default function Home() {
             </span>
           ))}
         </div>
+        <p className="mx-auto mt-5 max-w-xl text-body-sm text-text-3">
+          Cost is always a count here — bytes, files, row groups, engineer-months — never a
+          wall-clock number and never a price. The {DUCK_LABS.length} DuckDB labs run a real engine
+          against real files; the desks and the {DRILLS.length} Column Week incidents are modelled,
+          and say so on the page.
+        </p>
       </motion.div>
 
       {/* tracks */}
@@ -111,6 +120,48 @@ export default function Home() {
           </Link>
         </motion.div>
       </div>
+
+      {/* the remaining graded surfaces — each one is otherwise only in the nav */}
+      <motion.div
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, delay: 0.56 }}
+        className="mt-4 grid gap-4 sm:grid-cols-3"
+      >
+        {[
+          {
+            to: '/desks',
+            label: 'the desks',
+            title: `${DESKS.length} numeric desks`,
+            body: 'One decision each, submitted as numbers and graded against a reference model in tolerance bands.',
+          },
+          {
+            to: '/drills',
+            label: 'column week',
+            title: `${DRILLS.length} incidents`,
+            body: 'Modelled telemetry, read from counts alone: call the root cause and the mitigation before the debrief.',
+          },
+          {
+            to: '/capstone',
+            label: 'the capstone',
+            title: 'One recommendation',
+            body: 'Your own measurements recomputed into a platform decision, then taken into every room.',
+          },
+        ].map((c) => (
+          <Link
+            key={c.to}
+            to={c.to}
+            className="group block rounded-lg border border-line bg-surface-1 p-5 transition-colors hover:border-accent/50"
+          >
+            <p className="font-mono text-[11px] uppercase tracking-[0.12em] text-text-3">{c.label}</p>
+            <p className="mt-2 font-medium text-text-1">{c.title}</p>
+            <p className="mt-1.5 text-body-sm text-text-2">{c.body}</p>
+            <p className="mt-3 font-mono text-[11px] text-accent">
+              open <ArrowRight className="inline h-3 w-3" />
+            </p>
+          </Link>
+        ))}
+      </motion.div>
     </div>
   )
 }

@@ -1,9 +1,11 @@
 /**
  * Curriculum overview (curriculum.md): progress header with 120px ring,
- * the address-space stack (capstone on top → T0 base; mobile reverses to
- * T0→T3 via flex-col-reverse), expandable track layers with LessonRows,
+ * the address-space stack (capstone on top → C0 base; mobile reverses to
+ * C0→A2 via flex-col-reverse), expandable track layers with LessonRows,
  * dashed connectors with `requires` notes, "not sure where to start" strip
  * with a 5-question placement modal.
+ *
+ * Every count and every link target on this page derives from the registries.
  */
 
 import { useMemo, useState } from 'react'
@@ -22,7 +24,9 @@ import {
 } from 'lucide-react'
 import ProgressRing from '@/components/ProgressRing'
 import { rankForXp, selectStreak, useProgress } from '@/lib/progress'
-import { getTrack, TRACKS, CAPSTONE } from '@/lib/tracks'
+import { getTrack, TRACKS, CAPSTONE, ARCHITECTURE_TRACKS, ENGINE_TRACKS } from '@/lib/tracks'
+import { ARTIFACTS } from '@/lib/rooms/capstone'
+import { ROOMS } from '@/data/rooms'
 import {
   LESSON_META,
   ORDERED_LESSON_IDS,
@@ -36,6 +40,21 @@ import LessonRow from '@/pages/lesson/LessonRow'
 import { cn } from '@/lib/utils'
 
 const EASE = [0.16, 1, 0.3, 1] as [number, number, number, number]
+
+/**
+ * The three "where do I start" targets, resolved from the registry rather than
+ * written down. The previous versions were inherited from a row-store course:
+ * one pointed at `/lesson/t3.l1` and one at `/labs/hnsw`, neither of which this
+ * course has ever contained, so two of the three cards were 404s.
+ *
+ * Each lookup falls back to something that certainly exists, so a track rename
+ * degrades to the wrong-but-live card instead of a dead link.
+ */
+const START_HERE = LESSON_META[0]
+const SKIP_AHEAD_TRACK = getTrack('c4') ?? ENGINE_TRACKS[0]
+const SKIP_AHEAD = metaForTrack(SKIP_AHEAD_TRACK.id)[0] ?? START_HERE
+const ARCH_TRACK = ARCHITECTURE_TRACKS[0]
+const ARCH_START = metaForTrack(ARCH_TRACK.id)[0] ?? START_HERE
 
 /* ------------------------------------------------------------------ */
 /* placement quiz                                                      */
@@ -372,8 +391,9 @@ export default function CurriculumPage() {
             <p className="font-mono text-label uppercase text-text-3">0x02 — address space map</p>
             <h1 className="mt-3 font-display text-display-lg text-text-1">Curriculum</h1>
             <p className="mt-4 max-w-measure text-body-lg text-text-2">
-              Nine tracks, thirty-seven lessons, one capstone. The stack reads bottom to top: disk
-              physics at the base, vector indexes at the summit. Every layer is unlocked — the order is the point.
+              {TRACKS.length} tracks, {TOTAL_LESSON_COUNT} lessons, one capstone. The stack reads
+              bottom to top: the scan contract at the base, running a platform for other people at
+              the summit. Every layer is unlocked — the order is the point.
             </p>
             {/* legend */}
             <div className="mt-6 flex flex-wrap items-center gap-4 font-mono text-[11px] text-text-3">
@@ -402,7 +422,8 @@ export default function CurriculumPage() {
             {doneCount === 0 && (
               <p className="mt-5 inline-flex items-center gap-2 rounded-md border border-line bg-surface-1 px-3 py-2 font-mono text-[11px] text-text-2">
                 <span className="h-2 w-2 animate-pulse rounded-sm bg-accent" />
-                nothing allocated yet — the address space is all yours. Start at T0.L1.
+                nothing allocated yet — the address space is all yours. Start at{' '}
+                {TRACKS[0].code}.L1.
               </p>
             )}
           </motion.div>
@@ -441,7 +462,7 @@ export default function CurriculumPage() {
 
       {/* --------------------------- the stack --------------------------- */}
       <section className="mx-auto max-w-app px-6 py-12 lg:px-12">
-        {/* DOM order T0..T5,capstone; desktop reverses → capstone on top */}
+        {/* DOM order C0..A2,capstone; desktop reverses → capstone on top */}
         <div className="flex flex-col gap-2 lg:flex-col-reverse">
           {TRACKS.map((t) => (
             <TrackLayer key={t.id} trackId={t.id as TrackId} open={open.has(t.id as TrackId)} onToggle={() => toggle(t.id as TrackId)} />
@@ -451,10 +472,10 @@ export default function CurriculumPage() {
           <div className="relative">
             <div className="flex items-center gap-3 py-1 pl-6">
               <span className="h-6 border-l border-dashed border-line-bright" />
-              <span className="font-mono text-[10px] text-text-3">requires T0–T7 · the whole arc</span>
+              <span className="font-mono text-[10px] text-text-3">requires C0–C7 · A1 · A2 — the whole arc</span>
             </div>
             <Link
-              to="/labs/hnsw"
+              to="/capstone"
               className="group block rounded-lg border border-transparent bg-grad-brand p-[1px] transition-all duration-180 hover:-translate-y-0.5"
             >
               <span className="flex items-center gap-4 rounded-[7px] bg-surface-1 px-5 py-4">
@@ -465,10 +486,13 @@ export default function CurriculumPage() {
                     <span className="font-display text-h4 text-text-1">{CAPSTONE.name}</span>
                   </span>
                   <span className="mt-0.5 hidden truncate text-body-sm text-text-3 md:block">
-                    the whole arc — your engine, your vector index, and a business case priced from your own measurements
+                    {ARTIFACTS.length} artifacts assembled from your own measurements, defended in
+                    every room
                   </span>
                 </span>
-                <span className="hidden shrink-0 font-mono text-[11px] text-text-3 lg:block">lab 06 + crash week</span>
+                <span className="hidden shrink-0 font-mono text-[11px] text-text-3 lg:block">
+                  {ARTIFACTS.length} artifacts · {ROOMS.length} rooms
+                </span>
                 <ArrowRight size={18} className="shrink-0 text-text-3 transition-transform duration-150 group-hover:translate-x-1 group-hover:text-accent" />
               </span>
             </Link>
@@ -493,22 +517,22 @@ export default function CurriculumPage() {
           <div className="grid gap-4 md:grid-cols-3">
             {[
               {
-                who: 'Total beginner to database internals',
-                path: 'Start at the base: pages, I/O costs, and the buffer pool that runs it all.',
-                cta: 'T0 · L1 — Everything is a page',
-                to: `/lesson/${ORDERED_LESSON_IDS[0]}`,
+                who: 'New to columnar storage',
+                path: 'Start at the base: what a scan actually costs, and why bytes scanned is the only metric that survives contact with an invoice.',
+                cta: `${TRACKS[0].code} · L1 — ${START_HERE.title}`,
+                to: lessonPath(START_HERE),
               },
               {
-                who: 'You know storage engines already',
-                path: 'Skip to the mechanics: WAL, crash recovery, MVCC, the executor.',
-                cta: 'T3 · L1 — Write it down first',
-                to: `/lesson/t3.l1`,
+                who: 'You know the storage layer already',
+                path: 'Skip the encodings and jump to execution: batches, selection vectors, and computing without decoding.',
+                cta: `${SKIP_AHEAD_TRACK.code} · L1 — ${SKIP_AHEAD.title}`,
+                to: lessonPath(SKIP_AHEAD),
               },
               {
-                who: 'Here for the capstone only',
-                path: 'Straight to the HNSW lab — but storage and executor holes will show. Fair warning.',
-                cta: 'lab 06 — hnsw',
-                to: '/labs/hnsw',
+                who: 'Here for the architecture half',
+                path: `Straight to the ${ARCH_TRACK.code} lessons and the desks — but the numbers you defend in Design Review are the ones you measured in the engine half. Fair warning.`,
+                cta: `${ARCH_TRACK.code} · L1 — ${ARCH_START.title}`,
+                to: lessonPath(ARCH_START),
                 warn: true,
               },
             ].map((c) => (

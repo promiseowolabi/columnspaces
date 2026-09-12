@@ -27,7 +27,7 @@ export default function TrackCard({ track, className }: TrackCardProps) {
       className={cn('h-full', className)}
     >
       <Link
-        to={track.id === 'capstone' ? '/rooms' : `/tracks/${track.id}`}
+        to={track.id === 'capstone' ? '/capstone' : `/tracks/${track.id}`}
         className="group relative flex h-full flex-col overflow-hidden rounded-lg border border-line bg-surface-1 p-6 pl-7 transition-colors duration-180 hover:border-line-bright hover:shadow-[0_12px_32px_rgba(0,0,0,.4)]"
       >
         {/* memory-segment edge bar */}

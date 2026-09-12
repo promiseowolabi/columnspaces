@@ -143,27 +143,21 @@ change one number in a dossier and a different objection must appear.
 
 ## Build state
 
-`npm run report` is authoritative. Current:
+`npm run report` is authoritative. **The course is complete.**
 
-- **C0 The Scan Contract is complete** — 5/5 lessons, ending in a scan budget
-  handed to the scan desk.
-- **The empirical tier works.** duckdb-wasm runs in the tab; the `scan-bill` lab
-  measured 18.7× projection, 95% of row groups pruned, and the same query
-  reading 39.8× more bytes once the rows were written in a different order.
-  Those numbers are asserted against a real DuckDB engine in
-  `tests/duckdb-sql.test.ts`, not quoted from memory.
-- **Forge lab 01 `encodings` is gradeable end to end** — template red, solution
-  green, wasm verified headless over the real ABI, zip ships templates only.
-- **The Warehouse v0 runs** four deterministic traces against a layout you
-  control, with a reference layout to diff against.
-- **Machinery ahead of content, deliberately:** 5/5 rooms (21 objections), 5/5
-  drills, 8/8 desk specs. Desk *reference models* are not built yet.
-- **Outstanding: 49 lessons, 5 forge crates, 5 duck labs, 7 browser labs, 8 desk
-  models.**
-- **Verified:** `npm run verify` clean — lint, typecheck (including tests and
-  scripts), production build, 100 tests.
-
-See the RESUME POINT in `PLAN.md` for what is next and in what order.
+- **54/54 lessons** across 10 tracks and two halves.
+- **6/6 forge labs** (32 graded checks) — every template compiles and is red,
+  every solution green, every wasm verified over the real ABI, every zip ships
+  templates only, `pack-labs.py` exits 0.
+- **13/13 interactive labs** — 6 DuckDB labs running a real columnar engine in
+  the tab, 7 TypeScript browser labs.
+- **8/8 desk reference models**, graded in tolerance bands, with discipline
+  checks that fail on an omitted term even when the point estimate is perfect.
+- **5/5 Design Review rooms** (21 objections, 10 critical) driven by a persisted
+  dossier: only the objections your own numbers trigger will fire.
+- **5/5 Column Week drills**, and the capstone.
+- **622 tests.** `npm run verify` clean: manifest + agent surface regenerated,
+  lint, typecheck (src, tests and scripts), production build, suite.
 
 ### Known limitations
 

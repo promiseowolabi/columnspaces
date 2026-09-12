@@ -3,10 +3,25 @@ import { Link, NavLink, useLocation } from 'react-router'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Menu, X, Search } from 'lucide-react'
 import ProgressRing from '@/components/ProgressRing'
-import { useProgress, selectOverallPct, rankForXp } from '@/lib/progress'
+import { useProgress, rankForXp } from '@/lib/progress'
+/*
+ * Counts come from the TRACK REGISTRY, not from `@/data/lessons/manifest`.
+ * Navbar is rendered by Layout, so it is in the entry chunk: anything it imports
+ * is paid for at first paint, and importing the lesson metadata manifest here
+ * merges 54 lessons' worth of titles and hooks into the entry. tests/bundle.test.ts
+ * pins that the manifest stays its own chunk. `TOTAL_TRACK_LESSONS` and
+ * `ORDERED_LESSON_IDS` here are the same 54 ids in the same order.
+ */
+import { ORDERED_LESSON_IDS, TOTAL_TRACK_LESSONS as TOTAL_LESSON_COUNT } from '@/lib/tracks'
 import { openCommandPalette } from '@/lib/command-palette'
 import { cn } from '@/lib/utils'
 
+/**
+ * Every built surface, in reading order. This list is the contract
+ * tests/site.test.ts checks against the route table in App.tsx: a route that
+ * nothing here (or in Footer / CommandPalette) points at is a surface nobody
+ * can find, and a link here that no route serves is a 404 with a nice label.
+ */
 const NAV_LINKS = [
   { to: '/curriculum', label: 'Curriculum' },
   { to: '/warehouse', label: 'Warehouse' },
@@ -14,14 +29,13 @@ const NAV_LINKS = [
   { to: '/drills', label: 'Drills' },
   { to: '/desks', label: 'Desks' },
   { to: '/rooms', label: 'Review' },
+  { to: '/capstone', label: 'Capstone' },
   { to: '/progress', label: 'Progress' },
 ]
 
-const MOBILE_LINKS = [
-  { to: '/', label: 'Home' },
-  ...NAV_LINKS,
-  { to: '/progress', label: 'Progress' },
-]
+/* `to` doubles as the React key, so Home is the only addition — NAV_LINKS
+   already ends at /progress, and listing it twice produced duplicate keys. */
+const MOBILE_LINKS = [{ to: '/', label: 'Home' }, ...NAV_LINKS]
 
 /**
  * TopNavbar (design.md §9.1, home.md §0).
@@ -34,7 +48,17 @@ export default function Navbar() {
   const [scrolled, setScrolled] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const xp = useProgress((s) => s.xp)
-  const overallPct = useProgress(selectOverallPct)
+  /* `selectOverallPct` in lib/progress divides by its own TOTAL_LESSONS (37),
+     which the curriculum outgrew — it would read 145% at completion. The
+     denominator comes from the track registry instead of the lesson manifest:
+     Navbar is in the eager entry chunk, and importing the metadata here would
+     put every lesson title and hook into first paint (tests/bundle.test.ts). */
+  const lessonStates = useProgress((s) => s.lessons)
+  const overallPct = Math.round(
+    (ORDERED_LESSON_IDS.filter((id) => lessonStates[id]?.status === 'done').length /
+      TOTAL_LESSON_COUNT) *
+      100,
+  )
   const rank = rankForXp(xp)
 
   const isHome = pathname === '/'
@@ -86,7 +110,7 @@ export default function Navbar() {
           </Link>
 
           {/* Center: primary links (lg+) */}
-          <nav className="hidden items-center gap-7 lg:flex" aria-label="Primary">
+          <nav className="hidden items-center gap-4 lg:flex xl:gap-7" aria-label="Primary">
             {NAV_LINKS.map((link) => (
               <NavLink
                 key={link.to}
@@ -163,7 +187,10 @@ export default function Navbar() {
             transition={{ duration: 0.18 }}
             className="fixed inset-0 z-40 flex flex-col bg-ink/95 pt-16 backdrop-blur-md lg:hidden"
           >
-            <nav className="flex flex-col gap-1 px-6 pt-8" aria-label="Mobile">
+            <nav
+              className="flex flex-col gap-1 overflow-y-auto px-6 pt-8"
+              aria-label="Mobile"
+            >
               {MOBILE_LINKS.map((link, i) => (
                 <motion.div
                   key={link.to}

@@ -1,8 +1,17 @@
 /**
  * PROGRESS — /progress (progress.md).
  * "htop for your brain": rank panel, KPI tweens, per-track memory-map bars,
- * GitHub-style heatmap, 15 achievements, export/import/reset with double-confirm.
- * Consumes src/lib/progress.ts as-is.
+ * GitHub-style heatmap, a derived achievement set, and export/import/reset with
+ * double-confirm. Consumes src/lib/progress.ts as-is.
+ *
+ * Counts and conditions on this page derive from the registries. The achievement
+ * catalog previously described a row-store course — it awarded "page whisperer"
+ * for finishing T0 and "recall is a curve" for an `hnsw` lab, neither of which
+ * exists here, so ten of fifteen badges were permanently unreachable.
+ *
+ * NOTE on the denominator: lib/progress exports TOTAL_LESSONS = 37, which the
+ * curriculum outgrew. This page uses TOTAL_LESSON_COUNT from the lesson manifest
+ * instead. Fixing the constant at its source is a change to lib/progress.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -16,12 +25,9 @@ import {
   Download,
   Flame,
   Gauge,
-  Grid3X3,
-  Layers,
   Lock,
   Play,
   Power,
-  Server,
   ShieldCheck,
   Sparkles,
   Trash2,
@@ -34,12 +40,19 @@ import {
   rankForXp,
   nextRank,
   selectStreak,
+  selectRoomsSurvived,
   exportProgress,
-  TOTAL_LESSONS,
 } from '@/lib/progress'
 import type { ProgressState } from '@/lib/progress'
-import { TRACKS, CAPSTONE, ORDERED_LESSON_IDS, SIMS } from '@/lib/tracks'
+import { TRACKS, CAPSTONE, SIMS } from '@/lib/tracks'
+import { ORDERED_LESSON_IDS, TOTAL_LESSON_COUNT, lessonMeta } from '@/data/lessons/manifest'
 import { FORGE_LABS } from '@/data/labs'
+import { BROWSER_LABS } from '@/data/browser-labs'
+import { DUCK_LABS } from '@/data/duck-labs'
+import { DRILLS } from '@/data/drills'
+import { DESKS } from '@/lib/desks'
+import { ROOMS } from '@/data/rooms'
+import { standing } from '@/lib/rooms/encounter'
 import ProgressRing from '@/components/ProgressRing'
 import { cn } from '@/lib/utils'
 
@@ -86,6 +99,22 @@ const trackDone = (s: ProgressState, tid: string, n: number) =>
 
 const labDone = (s: ProgressState, id: string) => s.labs[id]?.done ?? false
 
+/** Browser and duck labs record completion as a sim task, not a lab. */
+const simTaskDone = (s: ProgressState, simId: string) =>
+  s.sims[simId]?.tasksDone.includes('complete') ?? false
+
+/* No all-browser-labs achievement: BROWSER_LABS declares seven and not all are
+   built, so the badge would be permanently unreachable — which is the exact
+   defect this catalog was rewritten to remove. GradedSurfaces reports the
+   partial count instead. */
+const duckLabsDone = (s: ProgressState) =>
+  DUCK_LABS.filter((l) => simTaskDone(s, `dlab:${l.id}`)).length
+
+const drillsDone = (s: ProgressState) => s.fleetWeek.actsDone.includes('drills')
+
+const lessonsDone = (s: ProgressState) =>
+  ORDERED_LESSON_IDS.filter((id) => s.lessons[id]?.status === 'done').length
+
 const ACHIEVEMENTS: AchievementDef[] = [
   {
     id: 'first-boot',
@@ -95,78 +124,16 @@ const ACHIEVEMENTS: AchievementDef[] = [
     color: '#3EF2A4',
     derived: (s) => Object.values(s.lessons).some((l) => l.status === 'done'),
   },
-  {
-    id: 'track-tr',
-    name: 'rustacean',
-    cond: 'complete Tᴿ — Rust Zero',
-    icon: Wrench,
-    color: '#94A3B8',
-    derived: (s) => trackDone(s, 'tr', 4),
-  },
-  {
-    id: 'track-t0',
-    name: 'page whisperer',
-    cond: 'complete T0 — The Disk Contract',
-    icon: Server,
-    color: '#22D3EE',
-    derived: (s) => trackDone(s, 't0', 4),
-  },
-  {
-    id: 'track-t1',
-    name: 'tuple wrangler',
-    cond: 'complete T1 — Pages & Tuples',
-    icon: Layers,
-    color: '#5CA8FF',
-    derived: (s) => trackDone(s, 't1', 4),
-  },
-  {
-    id: 'track-t2',
-    name: 'balanced by construction',
-    cond: 'complete T2 — Indexing',
-    icon: Grid3X3,
-    color: '#3EF2A4',
-    derived: (s) => trackDone(s, 't2', 4),
-  },
-  {
-    id: 'track-t3',
-    name: 'fsync honest',
-    cond: 'complete T3 — WAL & Recovery',
-    icon: Lock,
-    color: '#FB923C',
-    derived: (s) => trackDone(s, 't3', 3),
-  },
-  {
-    id: 'track-t4',
-    name: 'snapshot reader',
-    cond: 'complete T4 — MVCC & Isolation',
-    icon: Cpu,
-    color: '#A78BFA',
-    derived: (s) => trackDone(s, 't4', 4),
-  },
-  {
-    id: 'track-t5',
-    name: 'plan reader',
-    cond: 'complete T5 — The Executor & the Planner',
-    icon: Braces,
-    color: '#FB7185',
-    derived: (s) => trackDone(s, 't5', 3),
-  },
-  {
-    id: 'track-t6',
-    name: 'approximately exact',
-    cond: 'complete T6 — Vectors & HNSW',
-    icon: Sparkles,
-    color: '#E879F9',
-    derived: (s) => trackDone(s, 't6', 3),
-  },
-  {
-    id: 'track-t7',
-    name: 'the analytical turn',
-    cond: 'complete T7 — The Analytical Turn',
-    icon: Cpu,
-    color: '#A3E635',
-    derived: (s) => trackDone(s, 't7', 3),
-  },
+  /* One per track, generated from the registry — a renamed or resized track can
+     no longer leave an unreachable badge behind. */
+  ...TRACKS.map<AchievementDef>((t) => ({
+    id: `track-${t.id}`,
+    name: `${t.code.toLowerCase()} complete`,
+    cond: `complete ${t.code} — ${t.name}`,
+    icon: t.glyph,
+    color: t.color,
+    derived: (s) => trackDone(s, t.id, t.lessons),
+  })),
   {
     id: 'forge-first',
     name: 'first forge',
@@ -176,28 +143,47 @@ const ACHIEVEMENTS: AchievementDef[] = [
     derived: (s) => Object.values(s.labs).some((l) => l.done),
   },
   {
-    id: 'engine-arc',
-    name: 'the engine arc',
-    cond: 'slotted-pages + btree + wal green',
-    icon: Grid3X3,
-    color: '#5CA8FF',
-    derived: (s) => labDone(s, 'slotted-pages') && labDone(s, 'btree') && labDone(s, 'wal'),
+    id: 'forge-complete',
+    name: 'the whole forge',
+    cond: `pass all ${FORGE_LABS.length} forge labs`,
+    icon: Wrench,
+    color: '#A3E635',
+    derived: (s) => FORGE_LABS.every((l) => labDone(s, l.id)),
   },
   {
-    id: 'recall-is-a-curve',
-    name: 'recall is a curve',
-    cond: 'finish the capstone — hnsw green',
-    icon: ShieldCheck,
-    color: '#FBBF24',
-    derived: (s) => labDone(s, 'hnsw'),
+    id: 'empiricist',
+    name: 'empiricist',
+    cond: `check every claim in all ${DUCK_LABS.length} DuckDB labs`,
+    icon: Cpu,
+    color: '#22D3EE',
+    derived: (s) => duckLabsDone(s) >= DUCK_LABS.length,
   },
   {
     id: 'incident-commander',
     name: 'incident commander',
-    cond: 'diagnose all four crash week drills',
+    cond: `diagnose all ${DRILLS.length} Column Week incidents`,
     icon: Gauge,
     color: '#FB7185',
-    derived: (s) => s.fleetWeek.actsDone.includes('drills'),
+    derived: drillsDone,
+  },
+  {
+    id: 'dossier-complete',
+    name: 'every figure submitted',
+    cond: `submit every figure the ${DESKS.length} desks produce`,
+    icon: Braces,
+    color: '#5CA8FF',
+    derived: (s) => {
+      const st = standing(ROOMS, s.dossier)
+      return st.total > 0 && st.filled >= st.total
+    },
+  },
+  {
+    id: 'room-survivor',
+    name: 'survived the review',
+    cond: `survive all ${ROOMS.length} Design Review rooms`,
+    icon: ShieldCheck,
+    color: '#FBBF24',
+    derived: (s) => selectRoomsSurvived(s) >= ROOMS.length,
   },
   {
     id: 'week-uptime',
@@ -210,14 +196,13 @@ const ACHIEVEMENTS: AchievementDef[] = [
   {
     id: 'superuser',
     name: 'superuser',
-    cond: 'every lesson done + every lab green',
+    cond: 'every lesson done · every forge lab green · every room survived',
     icon: Sparkles,
     color: '#FFB224',
     derived: (s) =>
-      Object.values(s.lessons).filter((l) => l.status === 'done').length >= TOTAL_LESSONS &&
-      ['rust-kv', 'slotted-pages', 'btree', 'wal', 'mvcc', 'volcano', 'hnsw', 'buffer-pool', 'optimizer', 'columnar'].every((id) =>
-        labDone(s, id),
-      ),
+      lessonsDone(s) >= TOTAL_LESSON_COUNT &&
+      FORGE_LABS.every((l) => labDone(s, l.id)) &&
+      selectRoomsSurvived(s) >= ROOMS.length,
   },
 ]
 
@@ -232,12 +217,12 @@ function RankPanel() {
   const ref = useRef<HTMLDivElement>(null)
   const inView = useInView(ref, { once: true })
   const shownXp = useCountUp(xp, inView)
-  const done = Object.values(lessons).filter((l) => l.status === 'done').length
+  const done = ORDERED_LESSON_IDS.filter((id) => lessons[id]?.status === 'done').length
   const scored = Object.values(lessons).filter((l) => l.quizScore != null)
   const quizAvg = scored.length
     ? Math.round((scored.reduce((a, l) => a + (l.quizScore ?? 0), 0) / scored.length) * 100)
     : 0
-  const labsDone = Object.values(labs).filter((l) => l.done).length
+  const labsDone = FORGE_LABS.filter((l) => labs[l.id]?.done).length
   const pctToNext = next ? Math.min(100, (xp / next.minXp) * 100) : 100
 
   return (
@@ -272,7 +257,7 @@ function RankPanel() {
         </div>
       </div>
       <p className="mt-4 border-t border-line pt-3 font-mono text-[11px] text-text-3">
-        lessons {done}/{TOTAL_LESSONS} · quizzes {quizAvg}% · labs {labsDone}/{FORGE_LABS.length}
+        lessons {done}/{TOTAL_LESSON_COUNT} · quizzes {quizAvg}% · labs {labsDone}/{FORGE_LABS.length}
       </p>
     </motion.div>
   )
@@ -288,8 +273,10 @@ function KpiBand() {
   const ref = useRef<HTMLDivElement>(null)
   const inView = useInView(ref, { once: true, margin: '-10% 0px' })
 
-  const done = Object.values(lessons).filter((l) => l.status === 'done').length
-  const pct = Math.round((done / TOTAL_LESSONS) * 100)
+  /* Registry-scoped: a snapshot imported from a sibling course carries lesson
+     ids this curriculum does not have, and counting those overruns 100%. */
+  const done = ORDERED_LESSON_IDS.filter((id) => lessons[id]?.status === 'done').length
+  const pct = Math.round((done / TOTAL_LESSON_COUNT) * 100)
   const scored = Object.values(lessons).filter((l) => l.quizScore != null)
   const passed = scored.filter((l) => (l.quizScore ?? 0) >= 0.8).length
   const quizAvg = scored.length
@@ -330,14 +317,18 @@ function KpiBand() {
           <div>
             <p className="font-display text-stat text-text-1">{Math.round(shownPct)}%</p>
             <p className="font-mono text-[11px] text-text-3">
-              {done}/{TOTAL_LESSONS} lessons
+              {done}/{TOTAL_LESSON_COUNT} lessons
             </p>
           </div>
         </div>,
         <div key="k1">
           <p className="font-display text-stat text-text-1">{Math.round(shownStreak)}d</p>
           <p className="font-mono text-[11px] text-text-3">uptime</p>
-          <div className="mt-2 flex gap-1">
+          <div
+            className="mt-2 flex gap-1"
+            role="img"
+            aria-label={`${last14.filter(Boolean).length} of the last 14 days active`}
+          >
             {last14.map((on, i) => (
               <span
                 key={i}
@@ -379,12 +370,17 @@ function KpiBand() {
 
 function TrackBreakdown() {
   const lessons = useProgress((s) => s.lessons)
-  const labCapDone = useProgress((s) => s.labs['hnsw']?.done ?? false)
-  const drillsDone = useProgress((s) => s.fleetWeek.actsDone.includes('drills'))
+  /* Capstone standing = Column Week diagnosed + every room survived. It used to
+     read `labs['hnsw']`, a lab id this course has never had, so the row was
+     pinned at 0/2 for everyone and linked to a 404. */
+  const drillsAct = useProgress((s) => s.fleetWeek.actsDone.includes('drills'))
+  const roomsSurvived = useProgress(selectRoomsSurvived)
   const ref = useRef<HTMLDivElement>(null)
   const inView = useInView(ref, { once: true, margin: '-10% 0px' })
 
-  const capstoneDone = (labCapDone ? 1 : 0) + (drillsDone ? 1 : 0)
+  const capstoneParts = [drillsAct, roomsSurvived >= ROOMS.length]
+  const capstoneDone = capstoneParts.filter(Boolean).length
+  const capstonePct = Math.round((capstoneDone / capstoneParts.length) * 100)
 
   const nextId = ORDERED_LESSON_IDS.find((id) => lessons[id]?.status !== 'done') ?? null
 
@@ -440,21 +436,17 @@ function TrackBreakdown() {
               </motion.div>
             )
           })}
-          {/* capstone row: lab 06 + the drills, weighted equally */}
+          {/* capstone row: Column Week + the Design Review, weighted equally */}
           <motion.div
             initial={{ opacity: 0, y: 12 }}
             animate={inView ? { opacity: 1, y: 0 } : undefined}
             transition={{ duration: 0.4, delay: 0.6 }}
           >
             <Link
-              to="/labs/hnsw"
+              to="/capstone"
               className="group flex items-center gap-4 rounded-md border border-line bg-surface-1 px-4 py-3 transition-colors duration-180 hover:border-line-bright hover:bg-surface-2"
             >
-              <ProgressRing
-                value={Math.round((capstoneDone / 2) * 100)}
-                size={40}
-                strokeWidth={3}
-              />
+              <ProgressRing value={capstonePct} size={40} strokeWidth={3} />
               <span className="flex items-center gap-1.5 rounded-full border border-line px-2 py-0.5 font-mono text-[11px] text-grad-brand">
                 {CAPSTONE.code}
               </span>
@@ -465,12 +457,12 @@ function TrackBreakdown() {
                 <motion.div
                   className="h-full rounded-full bg-grad-brand"
                   initial={{ width: 0 }}
-                  animate={inView ? { width: `${(capstoneDone / 2) * 100}%` } : undefined}
+                  animate={inView ? { width: `${capstonePct}%` } : undefined}
                   transition={{ duration: 0.8, delay: 0.8, ease: [0.16, 1, 0.3, 1] }}
                 />
               </div>
               <span className="w-20 shrink-0 text-right font-mono text-[11px] text-text-3">
-                {capstoneDone}/2 · {Math.round((capstoneDone / 2) * 100)}%
+                {capstoneDone}/{capstoneParts.length} · {capstonePct}%
               </span>
             </Link>
           </motion.div>
@@ -522,9 +514,129 @@ function TrackBreakdown() {
             </div>
           </div>
           <p className="mt-3 font-mono text-[10px] text-text-3">
-            37 lesson blocks · solid = allocated · glow = next instruction
+            {ORDERED_LESSON_IDS.length} lesson blocks · solid = allocated · glow = next instruction
           </p>
         </motion.div>
+      </div>
+    </div>
+  )
+}
+
+/* ---------------- section 3b: everything that is not a lesson ---------------- */
+
+/**
+ * The graded surfaces the page used to ignore. Before this existed, Progress
+ * reported lessons and forge labs and nothing else — a reader could finish every
+ * DuckDB lab, every desk and every room and see no acknowledgement of it.
+ *
+ * Denominators come from the registries. Browser labs are the one honest
+ * exception: BROWSER_LABS declares the full set but not all of them are built
+ * yet, so the row says so instead of implying the missing ones are just undone.
+ */
+function GradedSurfaces() {
+  const labs = useProgress((s) => s.labs)
+  const sims = useProgress((s) => s.sims)
+  const dossier = useProgress((s) => s.dossier)
+  const roomRuns = useProgress((s) => s.rooms)
+  const drillsAct = useProgress((s) => s.fleetWeek.actsDone.includes('drills'))
+  const ref = useRef<HTMLDivElement>(null)
+  const inView = useInView(ref, { once: true, margin: '-10% 0px' })
+
+  const taskDone = (simId: string) => sims[simId]?.tasksDone.includes('complete') ?? false
+  const dossierStanding = useMemo(() => standing(ROOMS, dossier), [dossier])
+  const survived = Object.values(roomRuns).filter(
+    (r) => r.bestVerdict !== undefined && r.bestVerdict !== 'lost',
+  ).length
+
+  const rows = [
+    {
+      to: '/labs',
+      label: 'forge labs',
+      done: FORGE_LABS.filter((l) => labs[l.id]?.done).length,
+      total: FORGE_LABS.length,
+      note: 'Rust, graded by the same checks in your terminal and in the tab.',
+    },
+    {
+      to: '/curriculum',
+      label: 'browser labs',
+      done: BROWSER_LABS.filter((l) => taskDone(`blab:${l.id}`)).length,
+      total: BROWSER_LABS.length,
+      note: 'In-lesson micro-labs. Some are still being built — those cannot be completed yet.',
+    },
+    {
+      to: '/curriculum',
+      label: 'duckdb labs',
+      done: DUCK_LABS.filter((l) => taskDone(`dlab:${l.id}`)).length,
+      total: DUCK_LABS.length,
+      note: 'A real columnar engine in the tab, run against real files, so a claim can come out false.',
+    },
+    {
+      to: '/drills',
+      label: 'column week',
+      done: drillsAct ? DRILLS.length : 0,
+      total: DRILLS.length,
+      note: 'Modelled telemetry, not captured — diagnosable from counts alone.',
+    },
+    {
+      to: '/desks',
+      label: 'dossier figures',
+      done: dossierStanding.filled,
+      total: dossierStanding.total,
+      note: `The numbers the ${DESKS.length} desks produce, graded against reference models in tolerance bands.`,
+    },
+    {
+      to: '/rooms',
+      label: 'rooms survived',
+      done: survived,
+      total: ROOMS.length,
+      note: 'Each objection is a predicate over the dossier above, so the same numbers always face the same room.',
+    },
+  ]
+
+  return (
+    <div ref={ref} className="mt-14">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="font-display text-h3 text-text-1">graded surfaces</h2>
+        <p className="font-mono text-[11px] text-text-3">
+          everything that is not a lesson · counts, never clocks
+        </p>
+      </div>
+      <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        {rows.map((r, i) => {
+          const pct = r.total > 0 ? Math.round((r.done / r.total) * 100) : 0
+          return (
+            <motion.div
+              key={r.label}
+              initial={{ opacity: 0, y: 12 }}
+              animate={inView ? { opacity: 1, y: 0 } : undefined}
+              transition={{ duration: 0.4, delay: i * 0.06 }}
+            >
+              <Link
+                to={r.to}
+                className="flex h-full flex-col rounded-md border border-line bg-surface-1 px-4 py-3.5 transition-colors duration-180 hover:border-line-bright hover:bg-surface-2"
+              >
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="font-mono text-[11px] uppercase tracking-[0.10em] text-text-3">
+                    {r.label}
+                  </span>
+                  <span className="font-mono text-[11px] text-text-2">
+                    {r.done}/{r.total}
+                    <span className="text-text-3"> · {pct}%</span>
+                  </span>
+                </div>
+                <div className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-surface-3">
+                  <motion.div
+                    className="h-full rounded-full bg-accent"
+                    initial={{ width: 0 }}
+                    animate={inView ? { width: `${pct}%` } : undefined}
+                    transition={{ duration: 0.7, delay: 0.15 + i * 0.06, ease: [0.16, 1, 0.3, 1] }}
+                  />
+                </div>
+                <p className="mt-2.5 text-body-sm text-text-3">{r.note}</p>
+              </Link>
+            </motion.div>
+          )
+        })}
       </div>
     </div>
   )
@@ -642,10 +754,10 @@ function Heatmap() {
         {empty && (
           <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center bg-ink/60">
             <p className="font-mono text-body-sm text-text-2">
-              no activity yet — day 0 starts with T0.L1
+              no activity yet — day 0 starts with {ORDERED_LESSON_IDS[0].toUpperCase()}
             </p>
             <Link
-              to="/lesson/t0.l1"
+              to={`/lesson/${ORDERED_LESSON_IDS[0]}`}
               className="pointer-events-auto mt-3 rounded-md bg-accent px-4 py-2 font-display text-[14px] font-semibold text-accent-foreground transition-transform active:scale-[.97]"
             >
               begin →
@@ -715,7 +827,7 @@ function Achievements() {
                 {a.name}
               </p>
               <p className="mt-1 font-mono text-[11px] leading-tight text-text-3">
-                {earned ? 'unlocked' : a.cond}
+                {earned ? 'unlocked' : `locked — ${a.cond}`}
               </p>
             </motion.div>
           )
@@ -1065,6 +1177,7 @@ function UpNext() {
   const target = nextId ?? reviewId
   if (!target) return null
   const track = TRACKS.find((t) => t.id === target.split('.')[0])
+  const targetMeta = lessonMeta(target)
 
   return (
     <motion.div
@@ -1097,7 +1210,8 @@ function UpNext() {
             </span>
             <span className="font-mono text-body-sm text-text-1">{target}</span>
             <span className="font-mono text-[11px] text-text-3">
-              · {track?.name} · ~12min
+              · {track?.name}
+              {targetMeta ? ` · ~${targetMeta.minutes} min read` : ''}
             </span>
           </p>
         </div>
@@ -1145,6 +1259,7 @@ export default function Progress() {
 
         <KpiBand />
         <TrackBreakdown />
+        <GradedSurfaces />
         <Heatmap />
         <Achievements />
         <DataOwnership />

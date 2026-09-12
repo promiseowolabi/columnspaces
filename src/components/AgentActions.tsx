@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Bot, ClipboardCopy, ExternalLink } from 'lucide-react'
+import { asset } from '@/lib/asset'
 
 /**
  * AgentActions — agent-native tutoring entry points for a lesson.
@@ -13,7 +14,7 @@ export default function AgentActions({ lessonId, title }: { lessonId: string; ti
   const [copied, setCopied] = useState(false)
 
   const fetchMd = async (): Promise<string> => {
-    const res = await fetch(`/lessons-md/${lessonId}.md`)
+    const res = await fetch(asset(`lessons-md/${lessonId}.md`))
     return res.ok ? res.text() : `Lesson ${lessonId}: ${title}`
   }
 

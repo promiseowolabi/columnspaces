@@ -428,148 +428,76 @@ nested shredding, and the Iceberg/Delta design papers.
 
 ## RESUME POINT
 
-**PHASE 2 COMPLETE AND VERIFIED (2026-09-11). The spine is in.**
+**THE COURSE IS COMPLETE (2026-09-12).** 54/54 lessons, all machinery built, 622
+tests, CI green, deployed at `https://promiseowolabi.github.io/columnspaces/`.
 
-Verified with `npm run verify` (lint, `tsc -b` + a separate project that also
-typechecks `tests/` and `scripts/`, production build, **100 tests**), plus the
-Rust gates and the headless wasm ABI gate below.
+Built in five waves, each verified before the next: phase 1 (fork, registries,
+contracts), phase 2 (the spine — CONTENT-SPEC, the duckdb tier, C0, forge lab 01,
+the Warehouse), wave A (C2 + zone-maps), wave B (C3/C4 + two forge labs), wave C
+(C5/C6/C7 + the last two forge labs), wave D (8 desk models + the room encounter),
+and the final wave (A1/A2, the capstone, the last three browser labs, a
+publication audit).
 
-### Phase 1 (fork, registries, contracts) — shipped
+### What the build kept catching, and why that is the point
 
-Shell forked from tablespace; every `naigap` reference and every tablespace
-*identity* string removed and locked out by `tests/branding.test.ts`; deploy
-retargeted at `promiseowolabi.github.io/columnspaces` (`VITE_BASE`, `main`);
-content model rewritten (tracks `c0–c7` + `a1–a2`, required `takeaway`, and the
-`vendor` / `ducklab` / `desk` / `room` blocks with renderers); registries for
-tracks, lessons, forge labs, browser labs, duck labs and drills; the desk kit
-and 8 desk specs; 5 Design Review rooms with 21 objections (10 critical); the
-`Warehouse`, `Desk` and `Room` pages; and the seven inherited tablespace browser
-labs deleted rather than kept, because they made the report claim 7/7 built
-while none of them taught anything about columns.
+Every wave produced at least one finding that changed the content rather than
+merely passing a gate, which is the only evidence that the machinery is real:
 
-### Phase 2 (the spine) — shipped
+- **The SQL was wrong.** `hash()` returns UBIGINT and `array_extract` needs
+  BIGINT — the fixture generator would have failed on first run in a browser.
+- **The lesson overstated compression.** Measuring showed 1.4× on the fixture's
+  three projected columns because synthetic random revenue is near the worst
+  case, so C0.L1 was corrected and the lab now tells the reader not to read a
+  ratio off it.
+- **A writer does not do what a format defines.** DuckDB emits `PLAIN` for
+  `TIMESTAMP`, so a monotone timestamp compresses ~1.1× where frame-of-reference
+  arithmetic predicts ~3×. C1.L1 now sets the reader up to expect the lab to beat
+  the lesson on that column, and a test pins the writer behaviour.
+- **`labs.ts` overclaimed.** Lab 04 reads a Parquet-*shaped* teaching format, not
+  Parquet; the copy said "a genuine Parquet footer".
+- **Value corruption is silent.** Truncating a file is refused with the engine's
+  own error; flipping one byte inside a chunk returns 131,072 rows and a wrong
+  aggregate, because page CRCs are optional. C3.L2 is built on that asymmetry.
+- **Two desk models were wrong.** Compaction needed an explicit scope fraction
+  (it reported ~18× where C5 measures 2.11×), and read-amp had to be banded on
+  the overhead rather than the ratio.
+- **Registering all 54 lessons broke the bundle budget** — reading a list of
+  titles downloaded 1352 kB of prose. Fixed by a generated metadata manifest
+  (39 kB), and the test was rewritten so the cosmetic fix is impossible.
+- **A publication blocker, invisible in dev.** Root-absolute public paths ship
+  verbatim, so every forge-lab download 404'd under the `/columnspaces/` base
+  while all six zips sat correctly on disk. `dev` serves from `/`, so it worked
+  locally. Fixed with `src/lib/asset.ts` and pinned by test.
+- **Generated-and-committed files rot silently.** C1's markdown 404'd in
+  production because the export was never re-run. Now `npm run export` runs
+  inside `verify` and in CI, with freshness guards for both the agent surface and
+  the manifest.
 
-- **Repo live.** `github.com/promiseowolabi/columnspaces`, `main` pushed. The
-  remote must be SSH: `gh` is configured for ssh and an HTTPS push fails with no
-  credential helper.
-- **Toolchain.** rustup 1.29.1 installed at `~/.cargo` with
-  `wasm32-unknown-unknown`. **`PATH="$HOME/.cargo/bin:$PATH"` is required** —
-  the Arch system rust at `/usr/bin` has no wasm std. Proven by building
-  `libkslab.rlib` for wasm and then the whole lab.
-- **`CONTENT-SPEC.md`** — the authoring contract: block table, diagram and quiz
-  rules, the rot rule, **the VAST rule** (mechanisms not benchmarks, dated and
-  sourced, end on falsifiability), the two-audience voice guide, what each piece
-  of machinery actually grades, and a definition of done.
-- **Fixtures are DDL, not binary artifacts.** The risk PLAN named ("binary
-  Parquet in git") is gone: `src/lib/duckdb/fixtures.ts` generates 2M rows from
-  `range()` and a seeded `hash()` in the tab, then writes real Parquet into
-  duckdb's virtual filesystem at three row-group sizes. Nothing binary in git,
-  nothing to regenerate, and the reader can read the generating SQL.
-- **duckdb-wasm harness.** Pinned `1.32.0` (the `latest` dist-tag is a dev
-  build). Loaded by **dynamic import** from jsDelivr, so the ~33 MB engine never
-  enters the deploy; non-threaded bundle, because GitHub Pages cannot serve
-  cross-origin-isolation headers. `tests/bundle.test.ts` asserts no chunk
-  statically imports it, that something dynamically does, and a first-paint JS
-  ceiling.
-- **The `scan-bill` duck lab**, with its own shell and `dlab:` progress
-  namespace, five graded observations, and three caveats stated to the reader
-  (the CDN download, the 1/1000 scale, and that its synthetic revenue column
-  compresses far worse than real data — so no compression ratio should be read
-  off this fixture).
-- **Measured, on real DuckDB** (`tests/duckdb-sql.test.ts`, 11 tests, native
-  engine): **projection 18.7×**, clustered prunes **95%** (1 of 20 row groups),
-  **685×** total, shuffled prunes **0%** and reads **39.8× more bytes** for an
-  identical query. The test found a genuine bug in the production SQL —
-  `hash()` returns UBIGINT and `array_extract` needs BIGINT — and C0.L1 was
-  corrected where its compression sentence overstated what the fixture shows.
-- **C0 complete: 5/5 lessons.** `bytes-scanned-is-the-bill`,
-  `the-unit-is-never-a-value`, `three-places-bytes-live`,
-  `pruning-is-not-a-feature`, `the-scan-budget` — with two dated VAST vendor
-  blocks, the Warehouse exercise and the `scan-desk` hand-off.
-- **Forge lab 01 `encodings`.** Harness, template, tests and a gitignored
-  reference solution. Gates all pass: template compiles and is **red** (6
-  failing checks with `todo!()` messages), solution is **green** (6/6), wasm
-  builds with `ks_run`/`ks_alloc`/`ks_free` exported, `encodings.zip` packs
-  templates only (12 files, no `_solutions`, no `target`), and the check ids
-  match `src/data/labs.ts` verbatim. Mutation-tested with 8 planted bugs, each
-  caught by the check you would want.
-- **`scripts/verify-wasm-lab.ts` ported from bun to node** — a gate nobody on
-  this machine could run was not a gate. Confirmed: template → `TRAP (as
-  designed)`, solution → 6 green checks **over the real wasm ABI**.
-- **The Warehouse v0.** `src/lib/warehouse/{table,trace,engine}.ts` plus the
-  page: four deterministic traces, seven count-only metrics, and a reference
-  layout to diff against. Observed: dashboard prunes 99.3%, ad-hoc 6.3% (the
-  pruning killer, by design), ingest 97.5% with no shuffle, skew shuffles 13.5
-  GiB with a 13.4× max-over-mean partition. Deterministic; the reference ties
-  itself on all seven metrics.
-- **Test typechecking made permanent** (`tsconfig.test.json` + `npm run
-  typecheck`), which closed a real gap: `tsc -b` only covered `src`.
+### Known limitations (documented, not hidden)
 
-Current state per `npm run report`: **5/54 lessons**, 1/6 forge crates, 1/6 duck
-labs, 0/7 browser labs, 0/8 desk models, 5/5 rooms, 5/5 drills, 2 vendor blocks
-(0 stale). 100 tests.
+- **No VAST cluster.** Every VAST claim is a dated, sourced `vendor` block
+  describing a mechanism; no performance figure in this course was measured by
+  us. The capstone's final deliverable is a proof-of-concept plan, and the vendor
+  room's severity-3 objection grades whether the reader can name one.
+- **Desk submission forms are not built.** The eight models are implemented and
+  tested; the in-page forms that feed them are not. The A-track lessons teach the
+  arithmetic each desk checks.
+- **Deep links answer HTTP 404** (correct page in the body) — GitHub Pages has no
+  SPA rewrite. `llms.txt` points agents at `/lessons-md/`, which returns 200.
+- **No DOM test environment.** Components are covered by typecheck, lint, pure
+  unit tests and SSR smoke renders; there is no jsdom, so interaction paths are
+  not click-tested. Two duck-lab panels that need duckdb-wasm's virtual
+  filesystem (corruption and expiry) degrade visibly rather than silently and
+  want one manual browser pass.
+- **Desk bands are self-consistent by construction** — calibrated against the
+  reference models, not against real learners producing correct-but-different
+  reasoning. Inherited from vectorspace, and still true.
 
-### Phase 3 (part 1) — shipped
+### If the series continues
 
-- **Issues found and fixed first.** CI had failed on both earlier pushes: the
-  build job was green throughout and only `deploy` failed, because **GitHub Pages
-  was never enabled**. Enabled with `build_type=workflow`; the site is live at
-  `https://promiseowolabi.github.io/columnspaces/`.
-- **The dead UI layer is gone.** `src/components/ui/` (60 shadcn components) and
-  `components.json` deleted: nothing outside that directory imported any of it.
-  The live code needs **ten** runtime packages; the other 37 existed only to serve
-  dead files — and that is how the vulnerable `lodash` arrived, transitively via
-  `recharts`, via an unused chart component.
-- **Advisories 21 → 0.** Production reached zero by deleting the dead layer plus
-  patching react-router (high: RSC-mode CSRF bypass). Dev reached zero via
-  semver-safe patches plus a vitest 3 → 4.1.11 major, taken because the remaining
-  moderate was a path traversal in `@vitest/mocker` and no test here uses the
-  mocking API. All tests pass unchanged under vitest 4.
-- **CI hardened.** It never ran `npm run typecheck`, so tests and scripts were
-  unchecked in CI. Now: node 22, runs on pull requests with deploy skipped, and a
-  new **`labs` job** guarding what CI can actually verify — template compiles,
-  harness compiles, template is **red**, wasm exports the ABI, and no zip contains
-  `_solutions` or build output. All three jobs green.
-- **Deep-link caveat documented, not hidden.** GitHub Pages has no SPA rewrite,
-  so `/lesson/c0.l1` serves `404.html` — correct page, HTTP 404 status. `llms.txt`
-  now directs agents to `/lessons-md/*.md`, which return 200, and README lists it
-  under known limitations.
-- **C1 Encodings complete: 5/5 lessons.** `a-column-is-a-domain`,
-  `dictionary-and-run-length`, `bit-packing-and-frame-of-reference`,
-  `nulls-strings-and-the-floor`, `compute-without-decoding`.
-- **The `codec-bench` duck lab**, with 23 native-DuckDB tests asserting ratio
-  *orderings* in generous bands rather than byte counts.
-- **A finding that changed the content.** DuckDB's Parquet writer emits `PLAIN`
-  for `TIMESTAMP` — no `DELTA_BINARY_PACKED` — so a strictly monotone timestamp
-  column compresses ~1.1×, not the ~3× the codec arithmetic predicts. Rather than
-  bury it: C1.L1 tells the reader to expect the lab to beat the lesson on exactly
-  that column, C1.L3 gained a second caveat separating "the format defines this
-  encoding" from "your writer emits it", and the test asserts PLAIN is present and
-  DELTA_BINARY_PACKED is absent, so a future writer change fails the suite and
-  forces the copy to be updated.
-
-Current state per `npm run report`: **10/54 lessons**, 1/6 forge crates, 2/6 duck
-labs, 0/7 browser labs, 0/8 desk models, 5/5 rooms, 5/5 drills, 5 vendor blocks
-(0 stale). **123 tests.**
-
-### Next, in order (phase 3 — the engine half, part 2)
-
-1. **Forge lab 02 `zone-maps`** — build it before the C2 lessons, the same order
-   that worked for C1: the lessons then quote what the harness actually grades.
-   `no_false_negatives` is the sharpest invariant in the course.
-2. **C2 lessons (6)** — row groups and statistics, sort vs partition keys,
-   clustering depth, bloom filters, the pruning-ratio promise, and the
-   small-file generator.
-3. **The `pruning-lab` duck lab** — move the sort key and the row-group size and
-   watch row groups pruned move, including the point where finer groups make it
-   worse.
-4. **The `layout-designer` browser lab**, and **Column Week drills 1–2** wired
-   into the drills page.
-5. Then C3 + forge lab 04 `parquet-reader`, which pairs naturally.
-
-Parallelisation note: lessons within a track are independent files and fan out
-well to sub-agents once `CONTENT-SPEC.md` is the contract; forge crates and the
-`labs/Cargo.toml` members list do **not** — serialise anything touching that
-manifest to avoid races.
-
-
+The obvious next pieces, in order: desk submission forms (the largest remaining
+gap between what is graded and what a learner can submit), a DOM test
+environment so the labs' interactions are covered, and the leaderboard pattern
+from tablespace applied to forge lab 06's skew bound — a public board for the
+best `bytes_shuffled` on a fixed skewed plan would be the natural competitive
+surface for this subject.

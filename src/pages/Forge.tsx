@@ -6,6 +6,12 @@ import { getTrack } from '@/lib/tracks'
 import { useProgress, XP } from '@/lib/progress'
 import { cn } from '@/lib/utils'
 
+/** Check counts differ per lab (some have five, some six) — never assert one. */
+const CHECK_COUNTS = FORGE_LABS.map((l) => l.checks.length)
+const MIN_CHECKS = Math.min(...CHECK_COUNTS)
+const MAX_CHECKS = Math.max(...CHECK_COUNTS)
+const CHECK_RANGE = MIN_CHECKS === MAX_CHECKS ? `${MIN_CHECKS}` : `${MIN_CHECKS}–${MAX_CHECKS}`
+
 const STEPS = [
   {
     icon: Download,
@@ -15,7 +21,7 @@ const STEPS = [
   {
     icon: Terminal,
     title: 'make it green',
-    body: 'cargo test until six checks pass on your machine. The terminal and this site run the identical suite — green here means green there.',
+    body: `cargo test until every check passes on your machine — ${CHECK_RANGE} of them depending on the lab. The terminal and this site run the identical suite, so green here means green there.`,
   },
   {
     icon: Package,
@@ -82,7 +88,14 @@ export default function Forge() {
 
       {/* labs */}
       <div className="mt-16">
-        <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-text-3">labs</p>
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-text-3">labs</p>
+          <p className="font-mono text-[11px] text-text-3">
+            {FORGE_LABS.length} labs ·{' '}
+            {CHECK_COUNTS.reduce((a, b) => a + b, 0)} graded checks · every cost graded as a count,
+            never a clock
+          </p>
+        </div>
         <div className="mt-4 space-y-3">
           {FORGE_LABS.map((lab, i) => {
             const done = labs[lab.id]?.done ?? false
@@ -106,7 +119,17 @@ export default function Forge() {
                         : 'border-line bg-ink text-text-3',
                     )}
                   >
-                    {done ? <Check className="h-4 w-4" /> : String(lab.index).padStart(2, '0')}
+                    {done ? (
+                      <>
+                        <Check className="h-4 w-4" aria-hidden />
+                        <span className="sr-only">passed —</span>
+                      </>
+                    ) : (
+                      <>
+                        <span aria-hidden>{String(lab.index).padStart(2, '0')}</span>
+                        <span className="sr-only">lab {lab.index}, not yet passed —</span>
+                      </>
+                    )}
                   </span>
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">

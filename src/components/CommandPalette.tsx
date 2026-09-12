@@ -4,11 +4,13 @@ import Fuse from 'fuse.js'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Search, FileText, ArrowRight } from 'lucide-react'
 import { TRACKS, CAPSTONE, SIMS } from '@/lib/tracks'
+import { DESKS } from '@/lib/desks'
+import { ROOMS } from '@/data/rooms'
 import { cn } from '@/lib/utils'
 
 interface Item {
   id: string
-  group: 'Pages' | 'Tracks' | 'Simulators'
+  group: 'Pages' | 'Tracks' | 'Desks' | 'Rooms' | 'Simulators'
   title: string
   crumb: string
   to: string
@@ -32,7 +34,25 @@ const INDEX: Item[] = [
     to: `/tracks/${t.id}`,
     keywords: [t.name.toLowerCase(), t.code.toLowerCase()],
   })),
-  { id: 'track-capstone', group: 'Tracks', title: `${CAPSTONE.code} — ${CAPSTONE.name}`, crumb: 'capstone lab · hnsw', to: '/labs/hnsw', keywords: ['capstone', 'vector', 'hnsw'] },
+  { id: 'track-capstone', group: 'Tracks', title: `${CAPSTONE.code} — ${CAPSTONE.name}`, crumb: '~/capstone', to: '/capstone', keywords: ['capstone', 'platform decision', 'artifacts', 'verdict', 'poc'] },
+  /* /desk/:deskId and /room/:roomId are otherwise reachable only by clicking
+     through their index pages; the palette is what makes them addressable. */
+  ...DESKS.map<Item>((d) => ({
+    id: `desk-${d.id}`,
+    group: 'Desks',
+    title: d.name,
+    crumb: `desk · L${d.level} · ${d.checks.length} graded checks`,
+    to: `/desk/${d.id}`,
+    keywords: [d.id, d.name.toLowerCase(), ...d.checks],
+  })),
+  ...ROOMS.map<Item>((r) => ({
+    id: `room-${r.id}`,
+    group: 'Rooms',
+    title: `${r.role} — ${r.adversary}`,
+    crumb: `room · ${r.objections.length} objections`,
+    to: `/room/${r.id}`,
+    keywords: [r.id, r.role.toLowerCase(), r.adversary.toLowerCase(), 'objection', 'defend'],
+  })),
   ...SIMS.map<Item>((s) => ({
     id: `sim-${s.id}`,
     group: 'Simulators',
@@ -43,7 +63,7 @@ const INDEX: Item[] = [
   })),
 ]
 
-const GROUP_ORDER: Item['group'][] = ['Pages', 'Tracks', 'Simulators']
+const GROUP_ORDER: Item['group'][] = ['Pages', 'Tracks', 'Desks', 'Rooms', 'Simulators']
 
 /**
  * CommandPalette (design.md §9.3) — opens on ⌘K / Ctrl+K / `/`.
@@ -61,10 +81,21 @@ export default function CommandPalette() {
   )
 
   const results = useMemo(() => {
-    const items = query.trim() ? fuse.search(query).map((r) => r.item) : INDEX
+    const searching = query.trim().length > 0
+    const items = searching ? fuse.search(query).map((r) => r.item) : INDEX
     const grouped = new Map<Item['group'], Item[]>()
     for (const g of GROUP_ORDER) grouped.set(g, [])
-    for (const item of items.slice(0, 12)) grouped.get(item.group)?.push(item)
+    /* A flat top-12 was fine when the index was 20 entries; with desks, rooms
+       and every track in it, a flat cap hid whole groups behind a blank query.
+       Browsing caps per group; searching still ranks globally. */
+    if (searching) {
+      for (const item of items.slice(0, 12)) grouped.get(item.group)?.push(item)
+    } else {
+      for (const item of items) {
+        const bucket = grouped.get(item.group)
+        if (bucket && bucket.length < 6) bucket.push(item)
+      }
+    }
     const groups = GROUP_ORDER.map((g) => ({ group: g, items: grouped.get(g) ?? [] })).filter(
       (g) => g.items.length > 0,
     )

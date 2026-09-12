@@ -314,7 +314,7 @@ function TrackView({ trackId }: { trackId: TrackId }) {
               </span>
             </Link>
           ) : (
-            <Link to="/labs/hnsw" className="group rounded-lg border border-transparent bg-grad-brand p-[1px] transition-all duration-180 hover:-translate-y-0.5">
+            <Link to="/capstone" className="group rounded-lg border border-transparent bg-grad-brand p-[1px] transition-all duration-180 hover:-translate-y-0.5">
               <span className="block rounded-[7px] bg-surface-1 p-5 text-right">
                 <span className="flex items-center justify-end gap-1.5 font-mono text-[11px] text-grad-brand">
                   final destination <ArrowRight size={12} />

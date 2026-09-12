@@ -12,6 +12,7 @@ import {
   Upload,
   X,
 } from 'lucide-react'
+import { asset } from '@/lib/asset'
 import { FORGE_LABS } from '@/data/labs'
 import { lessonMeta } from '@/data/lessons/manifest'
 import { getTrack } from '@/lib/tracks'
@@ -177,7 +178,7 @@ export default function ForgeLab() {
           ))}
         </div>
         <a
-          href={lab.zip}
+          href={asset(lab.zip)}
           download
           className="mt-4 inline-flex items-center gap-2 rounded-md border border-accent/60 bg-accent/10 px-4 py-2 font-mono text-sm text-accent transition-colors hover:bg-accent/20"
         >

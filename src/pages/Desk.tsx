@@ -94,8 +94,12 @@ function DeskDetail({ id }: { id: DeskId }) {
       </section>
 
       <p className="mt-10 max-w-prose text-body-sm text-text-3">
-        The reference model and submission form for this desk are not built yet. The decision, the submission
-        shape and the checks above are fixed, because the lessons in A1 and A2 are written against them.
+        The reference model for this desk is implemented in <code>src/lib/desks/</code> and graded in
+        tolerance bands — a sizing model is not correct, it is within tolerance and honestly caveated.
+        Several of the checks above fail on an <em>omission</em> even when the point estimate is perfect,
+        because the term you left out is the failure mode. The in-page submission form is not built yet;
+        until it is, the desks are gradeable from their models and the A1/A2 lessons teach the arithmetic
+        each one checks.
       </p>
     </div>
   )

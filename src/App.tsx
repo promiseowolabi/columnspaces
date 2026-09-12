@@ -20,6 +20,7 @@ const Warehouse = lazy(() => import('@/pages/Warehouse'))
 const Drills = lazy(() => import('@/pages/Drills'))
 const Desk = lazy(() => import('@/pages/Desk'))
 const Room = lazy(() => import('@/pages/Room'))
+const Capstone = lazy(() => import('@/pages/Capstone'))
 const Progress = lazy(() => import('@/pages/Progress'))
 const NotFound = lazy(() => import('@/pages/NotFound'))
 
@@ -50,6 +51,7 @@ export default function App() {
           <Route path="/desk/:deskId" element={<Desk />} />
           <Route path="/rooms" element={<Room />} />
           <Route path="/room/:roomId" element={<Room />} />
+          <Route path="/capstone" element={<Capstone />} />
           <Route path="/progress" element={<Progress />} />
           <Route path="*" element={<NotFound />} />
         </Routes>

@@ -25,6 +25,12 @@ export interface ForgeLab {
   trackId: TrackId
   lessonId: string
   minutes: number
+  /**
+   * Path to the downloadable template, RELATIVE to the deploy base (no leading
+   * slash). A root-absolute path would 404 under a project-site deploy, and the
+   * bug is invisible in dev because dev serves from /. Resolve it with
+   * asset() from src/lib/asset.ts.
+   */
   zip: string
   artifact: string
   editFile: string
@@ -42,7 +48,7 @@ export const FORGE_LABS: ForgeLab[] = [
     trackId: 'c1',
     lessonId: 'c1.l2',
     minutes: 70,
-    zip: '/labs/encodings.zip',
+    zip: 'labs/encodings.zip',
     artifact: 'target/wasm32-unknown-unknown/release/encodings.wasm',
     editFile: 'src/encodings.rs',
     completion: {
@@ -71,7 +77,7 @@ export const FORGE_LABS: ForgeLab[] = [
     trackId: 'c2',
     lessonId: 'c2.l3',
     minutes: 70,
-    zip: '/labs/zone-maps.zip',
+    zip: 'labs/zone-maps.zip',
     artifact: 'target/wasm32-unknown-unknown/release/zone_maps.wasm',
     editFile: 'src/zone_maps.rs',
     completion: {
@@ -99,7 +105,7 @@ export const FORGE_LABS: ForgeLab[] = [
     trackId: 'c4',
     lessonId: 'c4.l3',
     minutes: 80,
-    zip: '/labs/vectorized.zip',
+    zip: 'labs/vectorized.zip',
     artifact: 'target/wasm32-unknown-unknown/release/vectorized.wasm',
     editFile: 'src/vectorized.rs',
     completion: {
@@ -127,7 +133,7 @@ export const FORGE_LABS: ForgeLab[] = [
     trackId: 'c3',
     lessonId: 'c3.l2',
     minutes: 80,
-    zip: '/labs/parquet-reader.zip',
+    zip: 'labs/parquet-reader.zip',
     artifact: 'target/wasm32-unknown-unknown/release/parquet_reader.wasm',
     editFile: 'src/parquet_reader.rs',
     completion: {
@@ -155,7 +161,7 @@ export const FORGE_LABS: ForgeLab[] = [
     trackId: 'c5',
     lessonId: 'c5.l3',
     minutes: 90,
-    zip: '/labs/merge-on-read.zip',
+    zip: 'labs/merge-on-read.zip',
     artifact: 'target/wasm32-unknown-unknown/release/merge_on_read.wasm',
     editFile: 'src/merge_on_read.rs',
     completion: {
@@ -184,7 +190,7 @@ export const FORGE_LABS: ForgeLab[] = [
     trackId: 'c6',
     lessonId: 'c6.l3',
     minutes: 90,
-    zip: '/labs/shuffle.zip',
+    zip: 'labs/shuffle.zip',
     artifact: 'target/wasm32-unknown-unknown/release/shuffle.wasm',
     editFile: 'src/shuffle.rs',
     completion: {

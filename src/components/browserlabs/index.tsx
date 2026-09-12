@@ -19,6 +19,9 @@ import LayoutDesignerLab from './LayoutDesignerLab'
 import BatchMachineLab from './BatchMachineLab'
 import MergePolicyLab from './MergePolicyLab'
 import ShufflePlannerLab from './ShufflePlannerLab'
+import ScanArithmeticLab from './ScanArithmeticLab'
+import CodecChooserLab from './CodecChooserLab'
+import FooterWalkLab from './FooterWalkLab'
 
 export type { LabTask }
 
@@ -103,6 +106,9 @@ const REGISTRY: Record<string, (p: { trackColor: string }) => ReactNode> = {
   'batch-machine': BatchMachineLab,
   'merge-policy': MergePolicyLab,
   'shuffle-planner': ShufflePlannerLab,
+  'scan-arithmetic': ScanArithmeticLab,
+  'codec-chooser': CodecChooserLab,
+  'footer-walk': FooterWalkLab,
 }
 
 /** Renders a `lab` content block. Unknown ids render a gentle placeholder. */

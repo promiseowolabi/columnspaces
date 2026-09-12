@@ -1,17 +1,34 @@
 import { Link } from 'react-router'
+import { TRACKS, TOTAL_TRACK_LESSONS as TOTAL_LESSON_COUNT } from '@/lib/tracks'
+/* Same reason as Navbar: the footer is in the entry chunk, so it may not import
+   the lesson metadata manifest. The registry total is the same 54. */
 
+/**
+ * Every built surface gets a footer entry. Checked against App.tsx's route
+ * table by tests/site.test.ts — see the note in Navbar.
+ */
 const LEARN_LINKS = [
   { to: '/curriculum', label: 'Curriculum' },
   { to: '/warehouse', label: 'Warehouse' },
   { to: '/labs', label: 'Labs' },
   { to: '/drills', label: 'Drills' },
+  { to: '/desks', label: 'Desks' },
+  { to: '/rooms', label: 'Design Review' },
+  { to: '/capstone', label: 'Capstone' },
   { to: '/progress', label: 'Progress' },
 ]
 
+/**
+ * External and generated surfaces only. The previous `#method` / `#faq`
+ * anchors pointed at sections that do not exist on any page, and the GitHub
+ * entry pointed at github.com itself.
+ *
+ * `llms.txt` is a static file in public/, so it needs BASE_URL — the Pages
+ * deploy serves the app from /columnspaces/, not from the root.
+ */
 const META_LINKS = [
-  { href: '#method', label: 'Method' },
-  { href: '#faq', label: 'FAQ' },
-  { href: 'https://github.com', label: 'GitHub', external: true },
+  { href: `${import.meta.env.BASE_URL}llms.txt`, label: 'llms.txt' },
+  { href: 'https://github.com/promiseowolabi/columnspaces', label: 'GitHub', external: true },
 ]
 
 /**
@@ -37,7 +54,8 @@ export default function Footer() {
               The database is not a black box. Build one — page by page.
             </p>
             <p className="mt-3 max-w-xs text-body-sm text-text-3">
-              Runs 100% in your browser. Your progress never leaves <code>localStorage</code>.
+              {TOTAL_LESSON_COUNT} lessons across {TRACKS.length} tracks. Runs 100% in your browser.
+              Your progress never leaves <code>localStorage</code>.
             </p>
           </div>
 

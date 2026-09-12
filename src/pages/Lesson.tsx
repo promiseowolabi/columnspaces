@@ -25,6 +25,7 @@ import {
   Terminal,
   X,
 } from 'lucide-react'
+import { asset } from '@/lib/asset'
 import { XP, rankForXp, selectTrackPct, useProgress } from '@/lib/progress'
 import AgentActions from '@/components/AgentActions'
 import { getTrack, CAPSTONE } from '@/lib/tracks'
@@ -388,7 +389,7 @@ function TrackCompleteModal({ trackId, onClose }: { trackId: string; onClose: ()
         role="dialog"
         aria-label={`${track.name} complete`}
       >
-        <img src={`/badge-${trackId}.svg`} alt="" className="mx-auto h-24 w-24" />
+        <img src={asset(`badge-${trackId}.svg`)} alt="" className="mx-auto h-24 w-24" />
         <p className="mt-4 font-mono text-label uppercase" style={{ color: track.color }}>
           achievement unlocked
         </p>
@@ -740,7 +741,7 @@ function LessonView({ lesson }: { lesson: Lesson }) {
               </Link>
             ) : (
               <Link
-                to="/labs/hnsw"
+                to="/capstone"
                 className="group rounded-lg border border-transparent bg-grad-brand p-[1px] transition-all duration-180 hover:-translate-y-0.5"
               >
                 <span className="block rounded-[7px] bg-surface-1 p-4 text-right">
