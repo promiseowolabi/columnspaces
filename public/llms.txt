@@ -87,19 +87,30 @@ _Row-at-a-time execution spends most of its cycles on bookkeeping. Column-at-a-t
 
 _Everything columnar is optimised for reading, which makes writing the interesting problem. Write buffers, delta stores, merge-on-read versus copy-on-write, small-file amplification — and the freshness/cost curve you will be asked to sit on._
 
-
+- [C5.L1 Why Column Stores Hate Updates](https://promiseowolabi.github.io/columnspaces/lessons-md/c5.l1.md): You want to change one value. The value does not exist as a value: it is a code in a dictionary, packed at a width the whole page shares, compressed with its neighbours, and summarised by statistics that describe all of them. There is nothing there to edit.
+- [C5.L2 Write Buffers and Delta Stores](https://promiseowolabi.github.io/columnspaces/lessons-md/c5.l2.md): Every columnar platform has the same two-stage write path, and the only interesting question about yours is whether stage one can answer a query. If it cannot, your freshness is not your commit interval — it is your conversion lag, and nobody wrote that number down.
+- [C5.L3 Merge-on-Read versus Copy-on-Write](https://promiseowolabi.github.io/columnspaces/lessons-md/c5.l3.md): Thirty compaction policies, priced against the same seeded commit stream. Not one of them minimises both amplifications. Four of the thirty hold a read ceiling and a write budget at once — and on the update-heavy workload, none do, which is the most useful result in the lab.
+- [C5.L4 Small Files and the Freshness Curve](https://promiseowolabi.github.io/columnspaces/lessons-md/c5.l4.md): Someone asks for 30-second freshness instead of 15-minute. That is one sentence in a ticket, 30× the files at identical data volume, an average file of 8.7 MB instead of 260 MB, and a compaction ladder that blows the write-amplification budget before a single row is restated.
+- [C5.L5 The Update Path Decision](https://promiseowolabi.github.io/columnspaces/lessons-md/c5.l5.md): A compaction policy with no stated write-amplification number is an unbounded background bill with a cron entry. This is the page that fixes that: five numbers, one named loser, and the weakness of your own model said before the room finds it.
 
 ### C6 — Distributed Analytics
 
 _One machine can only be so wide. The moment a query spans nodes, the dominant cost stops being bytes read and becomes bytes moved — and the architecture that decides how much moves is the one you are buying when you choose a platform._
 
-
+- [C6.L1 Shuffle Is the Bill](https://promiseowolabi.github.io/columnspaces/lessons-md/c6.l1.md): Filters, projections and partial aggregates never cross the network. Joins on the wrong key and final aggregations on a new key do — and that single line item is the one no codec, zone map or vectorised kernel can reduce.
+- [C6.L2 Broadcast or Partition](https://promiseowolabi.github.io/columnspaces/lessons-md/c6.l2.md): Broadcast moves the small side once per worker; partitioning moves both sides once. The crossover is exactly 1 + probe/small, which means the plan that was right last quarter is arithmetic away from being wrong this one.
+- [C6.L3 Skew Is the Runtime](https://promiseowolabi.github.io/columnspaces/lessons-md/c6.l3.md): The mean partition holds exactly 15,000 rows under every distribution the lab measures, while the largest holds 17,489 in one and 227,801 in another. Only one of those two numbers knows anything about your data, and it is not the one on the dashboard.
+- [C6.L4 Shared Nothing, Shared Disk, Shared Everything](https://promiseowolabi.github.io/columnspaces/lessons-md/c6.l4.md): Compare the three architectures on throughput and you learn nothing you can defend. Compare them on what happens when a node dies and what happens when you resize, and the differences are arithmetic: 8.4 TB moved versus 0.
+- [C6.L5 Elasticity and What It Costs](https://promiseowolabi.github.io/columnspaces/lessons-md/c6.l5.md): Disaggregation buys independent scaling, disposable compute and one copy for many engines. It charges for all three in round trips — and the workload that pays is the one that looked fine on local disk.
 
 ### C7 — Beyond Flat Columns
 
 _Real data is not a flat table. Nested structures get shredded into columns, schemas change under you, Arrow decides what crossing a process boundary costs, and vectors now want to live in the same table as everything else._
 
-
+- [C7.L1 Shredding Nested Data](https://promiseowolabi.github.io/columnspaces/lessons-md/c7.l1.md): Four orders with a nullable list of items produce a column holding 2 values and 5 level pairs. The levels are longer than the data, and without them the records cannot be put back together.
+- [C7.L2 JSON and the Schema You Did Not Declare](https://promiseowolabi.github.io/columnspaces/lessons-md/c7.l2.md): A JSON column stored as text is one byte range per row group and zero pruning. Shred four fields out of it and you get statistics that skip files — until one row arrives with a string where the timestamp was.
+- [C7.L3 Schema Evolution on Disk](https://promiseowolabi.github.io/columnspaces/lessons-md/c7.l3.md): Adding a nullable column rewrites zero files. Renaming one rewrites zero files with field ids and silently un-deletes a column without them. And the change that cost eleven days of wrong revenue rewrote nothing at all.
+- [C7.L4 Arrow and Vectors in a Table](https://promiseowolabi.github.io/columnspaces/lessons-md/c7.l4.md): A 768-dimensional embedding is a fixed-size list column: 3 KB per row, one validity bit, no offsets buffer, and a min/max that answers no question anybody will ever ask.
 
 ### A1 — Solution Architecture
 

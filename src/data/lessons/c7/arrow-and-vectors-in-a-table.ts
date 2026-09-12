@@ -1,0 +1,296 @@
+import type { Lesson } from '../types'
+
+const lesson: Lesson = {
+  id: 'c7.l4',
+  slug: 'arrow-and-vectors-in-a-table',
+  trackId: 'c7',
+  index: 4,
+  title: 'Arrow and Vectors in a Table',
+  minutes: 18,
+  hook: 'A 768-dimensional embedding is a fixed-size list column: 3 KB per row, one validity bit, no offsets buffer, and a min/max that answers no question anybody will ever ask.',
+  exercise: 'quiz',
+  takeaway: {
+    number: '2 structs, 0 copies',
+    claim:
+      'Arrow removed serialisation from every process boundary with two C structs and an agreed memory layout — and it cannot remove pruning from a vector column, because a bound over 768 dimensions means nothing.',
+  },
+  blocks: [
+    {
+      type: 'prose',
+      md: `Everything in this half of the course has been about bytes at rest. This lesson is about the moment they stop being at rest and cross a boundary — from the reader into the engine, from the engine into Python, from Python into a library that wants a GPU.
+
+Count the boundaries in an ordinary pipeline. A Parquet reader hands batches to a query engine. The engine hands results to a Python client. The client hands arrays to a numerical library. The library hands them to something that talks to a device. Four handoffs, and historically each one was a **serialise, copy, parse** round trip into whichever in-memory representation the next component preferred. With *n* components that speak different memory layouts you need on the order of *n*² converters, and every one of them is somebody's afternoon plus a class of bug.
+
+Arrow's contribution is not a file format and not a library. It is an **agreed in-memory layout** plus a **minimal ABI for passing a pointer to it**, and what it removes is the round trip. Two components that both speak Arrow hand each other addresses. Nothing is parsed. Nothing is copied.
+
+That is the boundary-object half of the lesson. The second half is the column type this course has to be honest about: **vectors store beautifully in a columnar table and prune not at all**, and the structure that makes vector search fast is not a zone map and is not part of the table.`,
+    },
+    {
+      type: 'prose',
+      md: `## Why zero-copy needed a specification rather than a library
+
+The layout has to be pinned down to an uncomfortable level of detail before a pointer can be handed across a boundary safely, and the details are the interesting part.
+
+**Buffers are the unit, and which buffers exist is a function of the type.** A primitive int32 array is a validity bitmap plus a values buffer. A UTF-8 string array is validity, an offsets buffer of \`length + 1\` integers, and a data buffer. A list is validity plus offsets, with the elements living in a child array. A struct is validity plus one child array per field. This is a *fixed* mapping, published as a table, which is what lets a consumer that has never met the producer walk the buffers correctly.
+
+**Absence is one bit per slot, LSB-first, and separable.** Validity is a bitmap where a set bit means non-null, and an array with zero nulls may omit the bitmap entirely — so a consumer must handle both a present bitmap and a null pointer. Note the contrast with C7.L1: Parquet describes nesting with *level streams* because it optimises for a self-describing byte sequence you can append to; Arrow describes it with *offsets* because it optimises for O(1) random access to the *n*th element. Same information, different bet, and the bet is why converting between them costs real work at the read boundary.
+
+**Padding and alignment are recommendations with teeth.** 64-byte alignment and padding are recommended, and the number comes from SIMD register width — the same argument C4.L5 made about why batches want to be a shape the hardware likes. When Arrow data is serialised for interprocess communication those requirements are enforced rather than suggested.
+
+**Relocatable means no pointers inside the data.** Offsets are integers relative to a buffer, never machine addresses, which is what makes a record batch movable between processes in shared memory without fixing anything up. The specification calls this out as a key feature: relocatable without "pointer swizzling".
+
+The consequence for a design: **the layout is the contract, and it is versioned like one.** You are not depending on a library; you are depending on a document. That is why the ecosystem converged on it and why an engine can support Arrow without linking Arrow.`,
+    },
+    {
+      type: 'vendor',
+      snapshot: '2026-09',
+      title: 'What the Arrow specification actually commits to',
+      systems: ['arrow'],
+      sources: [
+        'https://arrow.apache.org/docs/format/Columnar.html',
+        'https://arrow.apache.org/docs/format/CDataInterface.html',
+      ],
+      md: `From the columnar format specification (published at format version **1.5** alongside Arrow 25.0.1) and the C data interface:
+
+- The format's four stated key features are **data adjacency for sequential scans, O(1) random access, SIMD- and vectorization-friendliness, and relocatability without pointer swizzling — "allowing for true zero-copy access in shared memory."** Run-end encoded arrays are the documented exception to O(1); their random access is O(log n).
+- The specification is explicit about the trade it makes: it "provides analytical performance and data locality guarantees **in exchange for comparatively more expensive mutation operations**." An Arrow array is not a data structure you update in place.
+- **The buffer layout per type is a published table.** Primitive is validity + data; variable binary is validity + offsets + data; list is validity + offsets; **fixed-size list is validity only**; struct is validity only; dense union is type ids + offsets. Buffers of child arrays are counted separately.
+- **A fixed-size list of size N stores value j as an N-long slice of the child array starting at offset j × N.** There is no offsets buffer, because there is nothing to offset — the arithmetic is the offset. That single sentence is the entire storage story for an embedding column.
+- **Serialised IPC messages can be interpreted without copying**: "Such messages can be 'deserialized' into in-memory Arrow array objects by examining only the message metadata without any need to copy or move any of the actual data." The record batch body is a flat sequence of buffers with at least 8-byte padding between them; 64-byte alignment is recommended, with the number taken from AVX-512 register width.
+- **The C data interface is two structs** — \`ArrowSchema\` (format string, name, metadata, flags, children, dictionary, release callback, private data) and \`ArrowArray\` (length, null count, offset, buffer count, buffers, children, dictionary, release callback, private data) — small enough that the specification tells you to **copy the definitions into your own source rather than take a dependency**. Its stated goals include "allow zero-copy sharing of Arrow data between independent runtimes and components running in the same process", and enabling integration "without an explicit dependency… on the Arrow software project". Once shipped in a release, **the C ABI is frozen**: those struct definitions may not change, including by adding members.
+- Its **non-goals** are as load-bearing as its goals: "data sharing between distinct processes or storage persistence." Cross-process and on-disk are the IPC format's job, not the C interface's.
+- Lifetime is handled by a **producer-supplied \`release\` callback**; a released structure is signalled by a NULL release pointer, and both parties are told to treat exported data as **immutable**, since either mutating would let the other see inconsistent state.
+- A fixed-size list's size parameter is a **32-bit signed integer**, and its C data interface format string is \`+w:123\` for a list of 123 items. So \`+w:768\` is an embedding column, expressed in six characters.`,
+    },
+    {
+      type: 'prose',
+      md: `## A vector is a cheap column and a useless one
+
+Now put embeddings in the table, because that is what everybody is doing, and price it honestly.
+
+A 768-dimensional \`float32\` embedding as a fixed-size list column:
+
+\`\`\`text
+per row      768 x 4 B                     = 3,072 B  (3 KB)
+             + 1 validity bit               ≈ 3,072 B
+             + 0 bytes of offsets           (fixed size needs none)
+
+100M rows    100e6 x 3,072 B                = 307 GB
+compression  general-purpose codecs on dense float32
+             ≈ 1x                           = 307 GB
+\`\`\`
+
+Storage is well-behaved and entirely predictable: no offsets, no level streams if the column is required, one bit per row of validity, and the *n*th vector is at a computable offset. Compression is where C1.L4's floor lesson returns — dense high-entropy floats are the near-worst case for a byte-oriented compressor, so plan the vector column at roughly 1× and let it dominate your storage model, because it will.
+
+Then try to prune it. The row group carries a minimum and a maximum for the column. **What are they minima of?** Over a fixed-size list the format has no defined ordering that means anything to a similarity query. Even if a writer records the element-wise minimum and maximum — a bounding box in 768 dimensions — no predicate anybody issues is of the form the box can answer. Nobody writes \`WHERE embedding > x\`. They write "the twenty nearest to this vector under cosine distance", and a bounding box in 768 dimensions excludes essentially nothing: high-dimensional bounding volumes are almost entirely empty, so a bound that is technically correct prunes technically nothing.
+
+So the honest statement of the situation is this: **every mechanism C2 built — zone maps, sort keys, clustering depth, bloom filters — is inapplicable to the vector column.** Not weaker. Inapplicable. A zone map answers range predicates; a bloom filter answers equality; a sort key creates locality along one dimension. A nearest-neighbour query is none of those things.
+
+Which is why **approximate nearest neighbour indexes are a different structure bolted alongside the column, not a statistic derived from it.** They are separately built, separately stored, separately maintained, separately invalidated by writes, and — unlike a zone map — **they can be wrong**: they return approximate results with a recall parameter you choose. C2.L6 made zero false negatives the one invariant that would not bend. An ANN index bends exactly that invariant on purpose, and calls the amount of bending a tuning knob.
+
+**This course is not going to teach you ANN.** It would take a track of its own to do properly, and one exists: **→ vectorspace** covers index families, the recall-versus-cost curve and how to choose between them, and **→ tablespace T6** covers what it means to hang a specialised index off a table you also have to operate. Read those. What C7 owes you is the boundary: how the vector column behaves as *storage*, what it does to your layout, and which of your existing tools stop working.
+
+The layout answer, and it is the one to say in a review: **filter on the scalar columns, search on the index.** A hybrid query — "nearest twenty among documents from this tenant in the last 30 days" — is a partition-and-zone-map problem on \`tenant_id\` and \`created_at\` composed with an index lookup on the embedding. The columnar layout you spent seven tracks learning to design is what makes the *candidate set* small; the index is what searches it. Get the first part wrong and the second part cannot save you.`,
+    },
+    {
+      type: 'diagram',
+      caption: 'fig 1 — one layout across four processes, and the column where the layout stops helping',
+      height: 76,
+      nodes: [
+        { id: 'proc', x: 2, y: 2, w: 96, h: 9, label: 'four boundaries: reader → engine → client → numerical library', sub: 'historically a serialise-copy-parse round trip at each one, and n components want n² converters', color: '#E879F9' },
+        { id: 'ser', x: 2, y: 14, w: 46, h: 11, label: 'convert at every boundary', sub: 'parse, copy, allocate, repeat', color: '#FB7185' },
+        { id: 'arrow', x: 52, y: 14, w: 46, h: 11, label: 'one agreed memory layout', sub: 'relocatable · no pointer swizzling', color: '#3EF2A4' },
+        { id: 'prim', x: 2, y: 28, w: 30, h: 10, label: 'primitive', sub: 'validity + values', color: '#94A3B8' },
+        { id: 'varb', x: 35, y: 28, w: 30, h: 10, label: 'utf8 / list', sub: 'validity + offsets (+ data)', color: '#94A3B8' },
+        { id: 'fsl', x: 68, y: 28, w: 30, h: 10, label: 'fixed-size list[768]', sub: 'validity only · slice at j × N', color: '#FBBF24' },
+        { id: 'zone', x: 2, y: 41, w: 46, h: 10, label: 'min/max over 768 dimensions', sub: 'correct, and it excludes almost nothing', color: '#FB7185' },
+        { id: 'ann', x: 52, y: 41, w: 46, h: 10, label: 'an ANN index beside the column', sub: 'separate structure · recall is a knob', color: '#5CA8FF' },
+        { id: 'hand', x: 2, y: 54, w: 96, h: 10, label: 'so: filter on the scalar columns, search on the index', sub: 'partitions and zone maps make the candidate set small; the index searches what survives', color: '#A78BFA' },
+        { id: 'next', x: 2, y: 67, w: 96, h: 8, label: '→ vectorspace for index families and the recall curve · → tablespace T6 for operating one', sub: 'this course stops at the storage boundary on purpose, because doing ANN properly takes a track', color: '#22D3EE' },
+      ],
+      edges: [
+        { from: 'proc', to: 'ser' },
+        { from: 'proc', to: 'arrow' },
+        { from: 'arrow', to: 'prim' },
+        { from: 'arrow', to: 'varb' },
+        { from: 'arrow', to: 'fsl' },
+        { from: 'fsl', to: 'zone' },
+        { from: 'fsl', to: 'ann' },
+        { from: 'zone', to: 'hand' },
+        { from: 'ann', to: 'hand' },
+        { from: 'hand', to: 'next' },
+      ],
+      steps: [
+        {
+          caption:
+            'Count the process boundaries in a normal pipeline: reader to engine, engine to client, client to numerical library, library to device. Each one used to mean serialise, copy and parse into somebody else\'s preferred layout.',
+          active: ['proc'],
+        },
+        {
+          caption:
+            'That cost scales as the square of the number of components, and every converter is a separate opportunity for a type-mapping bug. Agreeing on one in-memory layout replaces the whole matrix with a pointer handoff.',
+          active: ['ser', 'arrow'],
+          edges: ['proc->ser', 'proc->arrow'],
+        },
+        {
+          caption:
+            'For the handoff to be safe the layout has to be pinned to the buffer: which buffers exist for which type is a published table, offsets are integers rather than addresses, and validity is one bit per slot that may be omitted entirely.',
+          active: ['prim', 'varb', 'fsl'],
+          edges: ['arrow->prim', 'arrow->varb', 'arrow->fsl'],
+        },
+        {
+          caption:
+            'A fixed-size list is the cheapest nested layout there is — validity only, no offsets, because element j lives at j times N in the child array. That is exactly the shape of an embedding column, and it stores beautifully.',
+          active: ['fsl'],
+        },
+        {
+          caption:
+            'And it prunes not at all. A bound over 768 dimensions is a bounding box in a space that is almost entirely empty, and no similarity query is a range predicate anyway, so every skipping mechanism from C2 is inapplicable rather than merely weak.',
+          active: ['zone'],
+          edges: ['fsl->zone'],
+        },
+        {
+          caption:
+            'So the index is a separate structure alongside the column, with its own build cost, its own invalidation on write, and — unlike a zone map — permission to be wrong, since approximate search trades recall for cost by design.',
+          active: ['ann'],
+          edges: ['fsl->ann'],
+        },
+        {
+          caption:
+            'Which leaves one sentence for the review: filter on the scalar columns, search on the index. Everything the engine half taught you about layout is what makes the candidate set small enough for the index to matter.',
+          active: ['hand', 'next'],
+          edges: ['zone->hand', 'ann->hand', 'hand->next'],
+        },
+      ],
+    },
+    {
+      type: 'statline',
+      stats: [
+        {
+          value: '2 structs',
+          label: 'are the entire C data interface',
+          hint: 'ArrowSchema and ArrowArray, small enough that the spec tells you to copy them into your own source rather than take a dependency. Once released, the ABI is frozen.',
+        },
+        {
+          value: '0 offset bytes',
+          label: 'in a fixed-size list column',
+          hint: 'Validity bitmap only. Element j of a fixed-size list of N lives at offset j × N in the child array, so the arithmetic replaces the offsets buffer.',
+        },
+        {
+          value: '3,072 B',
+          label: 'per row for a 768-dimensional float32 embedding',
+          hint: '768 × 4 bytes, at roughly 1× compression because dense high-entropy floats are the worst case for a byte-oriented codec. 100M rows is about 307 GB.',
+        },
+        {
+          value: '64 bytes',
+          label: 'the recommended buffer alignment, from SIMD register width',
+          hint: 'The spec takes the number from AVX-512. Alignment and padding are recommendations in memory and enforced when data is serialised for IPC.',
+        },
+      ],
+    },
+    {
+      type: 'callout',
+      variant: 'info',
+      title: 'zero-copy is a property of a boundary, not of a system',
+      md: `Two claims get made in the same breath and only one of them is true.
+
+**True:** two components in the *same process* that both speak the Arrow layout can share an array by passing a pointer and a release callback. No parse, no copy, no allocation. The C data interface exists precisely for this, and its stated non-goals are equally precise: **not** across processes, **not** for persistence.
+
+**Not true:** "we use Arrow, so our pipeline has no serialisation cost." Crossing a machine boundary is the IPC format's job and involves writing buffers to a stream — cheaper than most alternatives because the receiving side can interpret the message from its metadata without copying the body, but it is still bytes on a wire, and C6 already priced what bytes on a wire cost you.
+
+The place this matters commercially is the read boundary. **Parquet is not Arrow.** Parquet has dictionary and RLE encodings, definition and repetition levels, and page compression; Arrow has offsets, validity bitmaps and one buffer layout per type. Reading Parquet into Arrow is a *decode*, and on a well-compressed column it is real CPU work that no amount of zero-copy elsewhere removes. When somebody claims a reader is zero-copy, the question to ask is "between which two components?" — and the honest answer for a Parquet reader is "between the decoder's output and everything downstream of it."`,
+    },
+    {
+      type: 'isomorphism',
+      title: 'the boundary object ≡ three agreements you already rely on',
+      pairs: [
+        {
+          os: 'the C ABI',
+          osLine:
+            'Nobody links every language to every other language. They agree on a calling convention and a struct layout, freeze it, and the n² problem collapses to n. The freeze is the feature.',
+          llm: 'the Arrow columnar format plus its C ABI',
+          llmLine:
+            'Same move at the level of tabular data, and the spec is explicit that once shipped the struct definitions may not change — not even by adding a member. You depend on a document, not a library.',
+        },
+        {
+          os: 'the Python buffer protocol',
+          osLine:
+            'Libraries that had never heard of each other could exchange numerical arrays with near-zero adaptation cost, because a small memory description was agreed on instead of a common object model.',
+          llm: 'the Arrow C data interface',
+          llmLine:
+            'Its own documentation names the buffer protocol as the inspiration. The lesson carried over is that the smallest sufficient agreement wins over the most complete one.',
+        },
+        {
+          os: 'a full-text index beside a relational table',
+          osLine:
+            'It answers a question SQL predicates cannot, it is built and maintained separately, it goes stale on write, and it is scored rather than exact. Nobody expects a b-tree to do its job.',
+          llm: 'an ANN index beside a vector column',
+          llmLine:
+            'Structurally identical, including the part people forget: it may return approximate answers by design, which breaks the zero-false-negatives invariant C2 refused to bend anywhere else.',
+        },
+      ],
+    },
+    {
+      type: 'quiz',
+      questions: [
+        {
+          q: 'A platform team stores 100M rows with a 768-dimensional float32 embedding column and proposes "sorting the table by embedding so the zone maps prune vector search". What is wrong?',
+          options: [
+            'Nothing is wrong, but the sort is expensive and should be scheduled as a compaction',
+            'Zone maps answer range predicates and a nearest-neighbour query is not one, and a bound over 768 dimensions excludes almost nothing because high-dimensional bounding volumes are nearly empty — vector search needs a separate ANN index, and the columnar layout should instead be designed to shrink the candidate set on the scalar filter columns',
+            'It would work, but only if the vectors are normalised first so that the ordering is meaningful',
+            'Sorting is the right idea but should be applied to a dimensionality-reduced projection of the vector, which restores zone-map pruning',
+          ],
+          correct: [1],
+          explanation:
+            'There is no ordering on a 768-dimensional vector that a similarity query can exploit through a min/max bound, and even an element-wise bounding box prunes essentially nothing in high dimensions. The mechanism mismatch is the point: zone maps answer ranges, bloom filters answer equality, sort keys create single-dimension locality, and approximate nearest neighbour is none of the three — which is why the index is a different structure rather than a statistic. Normalisation changes the distance metric, not the applicability of range pruning. The productive move is the one this course can actually teach: partition and sort on tenant and time so that the candidate set handed to the index is small.',
+        },
+        {
+          q: 'An engineer reports that a Parquet-to-pandas path is "slow despite being zero-copy Arrow end to end". What is the most likely explanation?',
+          options: [
+            'Arrow zero-copy only applies to fixed-width types, so the string columns are being copied',
+            'Reading Parquet into Arrow is a decode, not a copy avoidance: dictionary and run-length encodings, definition and repetition levels, and page compression all have to be undone to produce Arrow buffers, and zero-copy describes what happens after that decode, between components that already hold Arrow data',
+            'The 64-byte alignment requirement forces a reallocation of every buffer on import',
+            'Zero-copy requires the data to be in shared memory, so a single-process pipeline cannot benefit from it',
+          ],
+          correct: [1],
+          explanation:
+            'Parquet and Arrow are different representations with different goals — one optimises stored bytes and self-description, the other optimises in-memory access and interchange — so the boundary between them is a decode with real CPU cost, exactly the cost C1.L5 tried to avoid by executing on the compressed form instead. Zero-copy is a property of a specific boundary: between two components that both already hold Arrow buffers. Alignment is a recommendation in memory rather than a forced reallocation, and shared memory is where zero-copy is most visible but not a precondition — the C data interface is explicitly for components in the same process.',
+        },
+        {
+          q: 'You are asked to size and defend a table of 100M rows with a 768-dimensional embedding plus about 40 bytes of scalar columns. What goes in the memo?',
+          options: [
+            '"Roughly 307 GB for the vectors at about 1× compression versus about 4 GB of scalars, so the vector column is over 98% of storage and sets the floor for the whole plan. It cannot be pruned, so every dashboard-shaped query must avoid projecting it, and vector search needs a separate index with its own build and maintenance cost — which is a proof of concept I have not run and would want to measure on recall and index build time before committing."',
+            '"About 307 GB, and compression will bring that down substantially once we tune the codec."',
+            '"Storage is the cheap term; the important number is query latency, which we will measure after launch."',
+            '"About 100 GB, assuming the 3× compression Parquet typically achieves."',
+          ],
+          correct: [0],
+          explanation:
+            'This is C1.L4\'s floor rule applied to the newest column type: the ratio to plan with is the worst significant column, and dense float32 is close to incompressible, so the vector column both dominates storage and refuses every skipping mechanism in the course. The first answer also does the two things the rooms grade — it names what the design is bad at, and it states what a proof of concept would have to measure rather than asserting a figure nobody has verified. Promising codec tuning on dense high-entropy floats is the specific claim that will not survive; quoting a generic 3× ratio imports somebody else\'s column mix; and deferring to post-launch latency swaps a count you can compute now for a clock you cannot.',
+        },
+      ],
+    },
+    {
+      type: 'deepdive',
+      title: 'going deeper: the layout, the ABI, and where this course hands off',
+      md: `**Read \`Columnar.html\` once, properly.** It is the specification, it is readable, and the buffer-listing table near the end settles most arguments about what a type costs in memory. Then read **\`CDataInterface.html\`**, which is short, and note how much of it is lifetime management rather than layout — the release callback semantics are where real integrations break. \`Schema.fbs\` and \`Message.fbs\` in the Arrow repository are the authoritative metadata definitions if you are implementing rather than integrating.
+
+For the design argument behind the string-view layout, the primary source is **Neumann and Freitag's Umbra paper (CIDR 2020)** — Arrow's binary view layout is adapted from it, and the twelve-byte inline representation with a four-byte prefix for comparisons is a small masterpiece of practical engineering. Compare it to FSST from C1.L4: two very different answers to "strings are the floor".
+
+**ADBC and Arrow Flight SQL** are worth knowing by name because they are where the boundary argument turns into a wire protocol and a database API: the claim is that a client should receive columnar batches rather than rows, and that the driver should not be the place your columnar layout dies. Whether that claim holds for your workload is a proof of concept, not a reading exercise.
+
+On vectors, the deliberate handoff: **→ vectorspace** for index families, the recall-versus-cost curve, and how to choose and tune one; **→ tablespace T6** for the operational reality of maintaining a specialised index next to a table you also have to compact and back up. The primary sources those courses build on — **HNSW (Malkov and Yashunin, 2016)** and the **IVF/PQ** line from **Jégou, Douze and Schmid (2011)** — are the right two papers to start from if you want the mechanisms. This course names them and stops, because a track that taught ANN badly would be worse than a track that pointed at one that teaches it well.
+
+## the engine half, closed
+
+Eight tracks, and one number underneath all of them: **bytes scanned is the bill.** C0 made it computable. C1 made the bytes smaller, C2 made them unread, C3 opened the files they live in, C4 replaced the machine that consumes them, C5 priced writing them, C6 priced moving them, and C7 covered the shapes real tables actually contain — nested, semi-structured, evolving, and now vector.
+
+What changes now is the audience. **A1** turns all of it into artifacts an architect signs: a layout design, a scan budget, a sizing model, a build-or-buy memo. **A2** is what happens after the design is approved, when the schemas are other people's and the 3am is yours. The mechanisms stop being the deliverable and become the evidence.
+
+One habit carries across the boundary, and it is the one the rooms grade hardest: **state the caveat first.** Every number in the architecture half is a model with a weakness, and the engineer who names it before the room does is the one whose figures get believed.`,
+    },
+  ],
+}
+
+export default lesson
