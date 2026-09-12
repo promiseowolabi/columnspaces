@@ -55,11 +55,13 @@ Now price it under two layouts, using nothing but the arithmetic above.
 
 **Column store, badly laid out.** Projection works immediately: three column files instead of sixty. 2 billion rows × 28 bytes = **56 GB**. That is a **14× reduction from layout alone**, before compression, before pruning, without changing one character of the query. This is the entire content of "just use a column store", and it is real.
 
-**Column store, laid out for this query.** If the table is physically clustered on \`order_ts\`, the seven-day window lives in a small number of contiguous blocks. Block statistics — min and max \`order_ts\` per block — let the engine skip the rest **unread**. Skip 95% of blocks and you read **~2.8 GB** of the 56 GB; skip 99% and you read **~560 MB**. Compression then shrinks whatever survived, by a factor that depends entirely on which columns you kept — C1 measures it, and it is the one factor here you cannot predict from the schema alone.
+**Column store, laid out for this query.** If the table is physically clustered on \`order_ts\`, the seven-day window lives in a small number of contiguous blocks. Block statistics — min and max \`order_ts\` per block — let the engine skip the rest **unread**. Skip blocks holding 95% of the rows and you read **~2.8 GB** of the 56 GB; skip 99% and you read **~560 MB**. (Note the phrasing: 95% of the *rows*, not 95% of the *blocks*. The two coincide only when blocks are equally full, and the lab below is about to show you a case where they are not.) Compression then shrinks whatever survived, by a factor that depends entirely on which columns you kept — C1 measures it, and it is the one factor here you cannot predict from the schema alone.
 
 That is the arc of this course in one example: **800 GB → 56 GB → single-digit GB**, same data, same answer, same SQL. Three orders of magnitude, and not one of the steps was a hardware decision.
 
-The lab below runs exactly this comparison on a real columnar engine, on 500,000 rows rather than 2 billion. Run in a browser, it reports a **projection factor of 19×** and **96% of row groups pruned** — a **1,103× total** — with the identical query reading **64× more bytes** once the rows were written in a different order. Your numbers should match those closely, because the fixture is seeded; if they do not, one of us has learned something.`,
+The lab below runs exactly this comparison on a real columnar engine, on 500,000 rows rather than 2 billion. Run in a browser it reports a **projection factor of 19×**, **96% of row groups skipped**, and a **1,103× total**, with the identical query reading **64× more bytes** once the rows were written in a different order. Your numbers should match those closely, because the fixture is seeded; if they do not, one of us has learned something.
+
+One trap in that sentence, and it is worth the detour because it is the kind of thing that gets quoted into a design document. **96% of row groups skipped is not a 25× reduction in bytes.** Blocks are the unit of skipping, but blocks are not all the same size: 500,000 rows at 20,480 per group is 24 full groups and a final partial one holding 8,480, and a seven-day window at the end of the history lands inside that small one. So one group of twenty-five survives and it holds 1.70% of the rows — a **59×** byte reduction, not 25×. Group count is how many decisions the planner made. Bytes are what the survivors happened to contain. Quote the one you are being billed for.`,
     },
     {
       type: 'statline',
@@ -67,22 +69,22 @@ The lab below runs exactly this comparison on a real columnar engine, on 500,000
         {
           value: '28 / 400',
           label: 'bytes the query needs per row',
-          hint: 'Three columns of sixty. A row store bills you for all 400; a column store bills for 28.',
+          hint: 'The schema fact this all rests on: three columns of sixty. A row store bills you for all 400; a column store bills for 28. On the 2-billion-row table above that is a 14x projection factor — the measured figures below come from the lab, which runs a different, smaller fixture, so do not multiply across the two.',
         },
         {
-          value: '14×',
-          label: 'reduction from projection alone',
-          hint: '400 ÷ 28. Before compression, before pruning — this is what the layout gives you for free.',
+          value: '19×',
+          label: 'projection, measured',
+          hint: 'The lab fixture: 101.7 MiB for all 45 columns against 5.42 MiB for the three the query projects. Close to the schema arithmetic, and not identical to it, because columns do not all compress alike.',
         },
         {
-          value: '96%',
-          label: 'row groups skipped unread',
-          hint: 'Measured in a browser, not assumed: 1 of 25 row groups read for a seven-day window on a table clustered by time. Blocks whose max predates the predicate are never opened.',
+          value: '59×',
+          label: 'pruning, measured in BYTES',
+          hint: 'Not 25x. 1 of 25 row groups is read — 96% of groups skipped — but groups are not the same size: 500,000 rows at 20,480 per group is 24 full groups plus a final partial one of 8,480, and the seven-day window lands inside that small one. So the surviving group holds 1.70% of the rows, not 4%. Group count is how many decisions the planner made; bytes are what the survivors actually hold.',
         },
         {
           value: '1,103×',
-          label: 'the factors multiplied',
-          hint: 'Measured in the lab: 19x projection times 58x pruning. They act on different terms of the same product, which is why they multiply rather than add.',
+          label: 'the two measured factors multiplied',
+          hint: '18.8 x 58.8 = 1,103, and 101.7 MiB ÷ 94 KiB = 1,103 independently. They multiply because they act on different terms of the same product: bytes per row, and rows read.',
         },
       ],
     },
