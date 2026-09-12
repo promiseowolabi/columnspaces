@@ -9,13 +9,12 @@ import { Link } from 'react-router'
 import { motion } from 'framer-motion'
 import { Check, ChevronRight, GraduationCap } from 'lucide-react'
 import { useProgress } from '@/lib/progress'
-import { lessonPath } from '@/data/lessons'
-import type { Lesson } from '@/data/lessons/types'
+import { lessonPath, type LessonMeta } from '@/data/lessons/manifest'
 import { EXERCISE_META } from '@/pages/lesson/exercise-meta'
 import { cn } from '@/lib/utils'
 
 interface LessonRowProps {
-  lesson: Lesson
+  lesson: LessonMeta
   trackColor: string
   /** highlight as the resume target */
   current?: boolean

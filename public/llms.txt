@@ -116,13 +116,25 @@ _Real data is not a flat table. Nested structures get shredded into columns, sch
 
 _Nobody is asking you to write the codec. They are asking whether the design will hold, what it will cost, and what breaks first. This track turns everything you measured in the engine half into artifacts an architect signs: a layout design, a scan budget, a sizing model, a build-or-buy memo._
 
-
+- [A1.L1 From Requirements to a Reference Architecture](https://promiseowolabi.github.io/columnspaces/lessons-md/a1.l1.md): A requirement document has forty statements in it and four of them decide the architecture. This is which four, what number to extract from each, and the one sentence that turns a diagram into a design.
+- [A1.L2 The Layout Design Document](https://promiseowolabi.github.io/columnspaces/lessons-md/a1.l2.md): Six fields on one page. One of them is a promise, one of them is the class you are abandoning, and one of the four checks that grades it has no tolerance band at all.
+- [A1.L3 The Sizing Model](https://promiseowolabi.github.io/columnspaces/lessons-md/a1.l3.md): Six itemised terms, and the one you leave out is the one that fails you. The desk rejects a sizing model with a perfect point estimate and no growth term — because a snapshot is not a plan.
+- [A1.L4 Multi-Tenancy in a Warehouse](https://promiseowolabi.github.io/columnspaces/lessons-md/a1.l4.md): One of your 400 tenants holds 10% of the bytes and is 40× the mean. The mean tenant does not exist, which makes every per-tenant average in your design document a fiction — including the one your chargeback model is built on.
+- [A1.L5 Ingest Topologies and What Freshness Costs](https://promiseowolabi.github.io/columnspaces/lessons-md/a1.l5.md): Someone will say "real-time" in the meeting and mean four different architectures. Three of them are the same curve at different points, and the fourth is priced on an axis nobody in the room has mentioned.
+- [A1.L6 Migration and Coexistence](https://promiseowolabi.github.io/columnspaces/lessons-md/a1.l6.md): The design review approves the new platform. Nobody approves the two quarters of running both, which is where the cost actually is — and the data movement is about 5% of it.
+- [A1.L7 Build or Buy, Computed](https://promiseowolabi.github.io/columnspaces/lessons-md/a1.l7.md): Every build-or-buy memo in this industry is lost on the same line item: infrastructure gets quoted precisely and the engineer gets quoted as "we will absorb it". Here is the version with labour in engineer-months — and the ending that makes it survive a vendor.
 
 ### A2 — Platform Engineering
 
 _A platform is what happens after the design is approved: other people's queries, other people's schemas, someone's 3am. The catalog as a control plane, schema changes as contracts, compaction as automation, and a query SLO you can actually defend._
 
-
+- [A2.L1 The Catalog Is the Control Plane](https://promiseowolabi.github.io/columnspaces/lessons-md/a2.l1.md): One component decides which files are in every table, so every query and every commit passes through it. That makes it the control plane, the availability floor and the first ceiling you will hit — and the ceiling is a file count, not a byte count.
+- [A2.L2 Schema as a Contract](https://promiseowolabi.github.io/columnspaces/lessons-md/a2.l2.md): A revenue model was wrong for eleven days and every pipeline stayed green, because the change was mechanically compatible and semantically a lie. The format cannot tell the difference. The contract is the thing that can.
+- [A2.L3 Automating Compaction and Lifecycle](https://promiseowolabi.github.io/columnspaces/lessons-md/a2.l3.md): Four background jobs decide whether your tables stay queryable and what they cost while doing nothing a user asked for. Each one gets a budget in counts — because a maintenance job without a budget is an unbounded bill with a cron entry.
+- [A2.L4 Observability and the Query SLO](https://promiseowolabi.github.io/columnspaces/lessons-md/a2.l4.md): Two of the five Column Week incidents were visible in telemetry for days before anyone acted, and neither showed up in job status. One was visible twelve hours before the invoice moved. This is the page that decides what wakes you up.
+- [A2.L5 Capacity and Chargeback](https://promiseowolabi.github.io/columnspaces/lessons-md/a2.l5.md): Five things saturate and capacity plans are written against one of them. On this platform storage sits at 57% of its ceiling at the horizon and the catalog binds in month 20 — and if you cannot say which tenant caused which share, you cannot govern any of it.
+- [A2.L6 DR, Time Travel, and What Restore Means](https://promiseowolabi.github.io/columnspaces/lessons-md/a2.l6.md): Time travel is the answer everybody gives and it is not a backup, because it lives in the same metadata tree it would have to recover from. An RPO resting on it has one failure domain where the plan claimed two — and a restore nobody has run is a document, not a plan.
+- [A2.L7 The Runbook and the On-Call Surface](https://promiseowolabi.github.io/columnspaces/lessons-md/a2.l7.md): The last page of the course is the one you would actually want at 3am: five incidents, each with the indicator that moved first, the diagnosis path, and an intervention with a stated cost. Then the handoff — your own measurements, defended in five rooms, ending on what a proof-of-concept would have to measure.
 
 ## Optional
 

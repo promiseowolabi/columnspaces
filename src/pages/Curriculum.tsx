@@ -24,14 +24,13 @@ import ProgressRing from '@/components/ProgressRing'
 import { rankForXp, selectStreak, useProgress } from '@/lib/progress'
 import { getTrack, TRACKS, CAPSTONE } from '@/lib/tracks'
 import {
-  ALL_LESSONS,
+  LESSON_META,
   ORDERED_LESSON_IDS,
   TOTAL_LESSON_COUNT,
-  TRACK_EXTRAS,
-  lessonsForTrack,
-  simsForTrack,
+  metaForTrack,
   lessonPath,
-} from '@/data/lessons'
+} from '@/data/lessons/manifest'
+import { TRACK_EXTRAS, simsForTrack } from '@/data/lessons/track-extras'
 import type { TrackId } from '@/data/lessons/types'
 import LessonRow from '@/pages/lesson/LessonRow'
 import { cn } from '@/lib/utils'
@@ -107,7 +106,7 @@ function PlacementModal({ onClose }: { onClose: () => void }) {
   const finished = step >= PLACEMENT.length
   const rec = recommendFor(score)
   const recTrack = getTrack(rec)!
-  const recLessons = lessonsForTrack(rec)
+  const recLessons = metaForTrack(rec)
 
   return (
     <motion.div
@@ -223,7 +222,7 @@ function TrackLayer({
 }) {
   const track = getTrack(trackId)!
   const extras = TRACK_EXTRAS[trackId]
-  const lessons = lessonsForTrack(trackId)
+  const lessons = metaForTrack(trackId)
   const sims = simsForTrack(trackId)
   const Glyph = track.glyph
   const lessonStates = useProgress((s) => s.lessons)
@@ -343,7 +342,7 @@ export default function CurriculumPage() {
 
   const nextRecommended = useMemo(() => {
     const id = ORDERED_LESSON_IDS.find((l) => lessonStates[l]?.status !== 'done') ?? ORDERED_LESSON_IDS[0]
-    return ALL_LESSONS.find((l) => l.id === id)!
+    return LESSON_META.find((l) => l.id === id)!
   }, [lessonStates])
 
   const [open, setOpen] = useState<Set<TrackId>>(() => new Set([nextRecommended.trackId]))

@@ -36,7 +36,7 @@ jobs:
 
       # Generated-and-committed files: regenerate first, so a stale agent surface
       # fails here (tests/agent-surface.test.ts) rather than 404ing in production.
-      - name: regenerate the agent surface
+      - name: regenerate the manifest and agent surface
         run: npm run export
 
       - name: lint

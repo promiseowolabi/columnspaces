@@ -20,7 +20,8 @@ import {
 import ProgressRing from '@/components/ProgressRing'
 import { selectTrackPct, useProgress } from '@/lib/progress'
 import { getTrack, TRACKS, CAPSTONE } from '@/lib/tracks'
-import { TRACK_EXTRAS, lessonsForTrack, simsForTrack, lessonPath } from '@/data/lessons'
+import { metaForTrack, lessonPath } from '@/data/lessons/manifest'
+import { TRACK_EXTRAS, simsForTrack } from '@/data/lessons/track-extras'
 import type { TrackId } from '@/data/lessons/types'
 import LessonRow from '@/pages/lesson/LessonRow'
 
@@ -53,7 +54,7 @@ export default function TrackPage() {
 function TrackView({ trackId }: { trackId: TrackId }) {
   const track = getTrack(trackId)!
   const extras = TRACK_EXTRAS[trackId]
-  const lessons = lessonsForTrack(trackId)
+  const lessons = metaForTrack(trackId)
   const sims = simsForTrack(trackId)
   const Glyph = track.glyph
 

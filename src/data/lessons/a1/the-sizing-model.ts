@@ -1,0 +1,360 @@
+import type { Lesson } from '../types'
+
+const lesson: Lesson = {
+  id: 'a1.l3',
+  slug: 'the-sizing-model',
+  trackId: 'a1',
+  index: 3,
+  title: 'The Sizing Model',
+  minutes: 20,
+  hook: 'Six itemised terms, and the one you leave out is the one that fails you. The desk rejects a sizing model with a perfect point estimate and no growth term — because a snapshot is not a plan.',
+  exercise: 'desk+quiz',
+  artifact: 'scan-budget',
+  takeaway: {
+    number: '183 TB/day → 408 TB/day',
+    claim:
+      'A sizing model is six itemised terms with growth as two separate factors, and the omission fails the desk even where the point estimate is exact: today\'s 183 TB/day is 408 TB/day at month 12 from 1.4× data and 1.6× adoption.',
+  },
+  blocks: [
+    {
+      type: 'prose',
+      md: `**Six line items.** A sizing model is not a total; it is a list somebody can attack one row at a time, which is the only reason a total survives.
+
+\`\`\`text
+1  stored bytes        110 TB logical ÷ 2.75× FLOOR ratio      =  40 TB
+2  scanned bytes/day    recurring 181.6 TB + ad-hoc bound 1.5   =  183.1 TB/day
+3  files               40 TB ÷ 512 MB target                    =  78,125
+4  metadata            78,125 footers × 24 KiB                  =  1.79 GiB
+5  ingest              55.6 GB/day stored, 1,152 files/day      =  48.3 MB/file
+6  growth              data ×1.4/yr  AND  adoption ×1.6/yr      =  ×2.24 at 12 mo
+                                                                   ─────────────
+                                                   month 12:  408 TB/day scanned
+\`\`\`
+
+\`scan-desk\` grades four checks over that page — \`per_query\`, \`daily_total\`, \`shape_stated\` and \`growth_modelled\` — with a tolerance of ±15% on the two arithmetic ones, because this is a model rather than a measurement and a band grades understanding where a point value grades conformity.
+
+The two discipline checks are where submissions actually die, and both fail for an **omission rather than an error**. \`shape_stated\` fails a byte count with no pricing shape attached, because the same 183 TB/day is the entire bill under per-byte-scanned and merely a capacity input under provisioned compute, where the billed count is concurrent slots held. \`growth_modelled\` fails a model that omits either growth term **even when the point estimate for today is exact.** That is not pedantry. A point estimate with no growth term is a photograph of a moving object, and the person you hand it to will budget for a year against it.`,
+    },
+    {
+      type: 'prose',
+      md: `## Line 1 — stored bytes, and the ratio that must be the floor
+
+Stored bytes is logical bytes divided by a compression ratio, and the entire difficulty of the line is which ratio.
+
+C1.L4's arithmetic, which is the one to carry: a ten-column table where nine columns compress 20× and one compresses 1×, and that one column holds a third of the raw bytes. Ratios do not average — you add the compressed sizes and divide:
+
+\`\`\`text
+67 B of well-behaved columns ÷ 20  =   3.35 B
+33 B of resistant column     ÷  1  =  33.00 B
+                                      ───────
+100 B logical                      =  36.35 B stored   →  2.75×
+\`\`\`
+
+**2.75×, not 18×.** After compression the resistant column is over 90% of the stored bytes, so every further improvement to the other nine is worth almost nothing. That is Amdahl's law wearing a storage costume, and the number that goes in the sizing model is the **floor** — what the bytes actually obey once the easy columns have given everything they have — rather than the average of a column scan.
+
+Now watch what the choice does to the plan:
+
+| ratio used | stored bytes from 110 TB logical | short by |
+|---|---|---|
+| 18× (average of column ratios) | 6.1 TB | **6.5×** |
+| 2.75× (the floor) | **40 TB** | — |
+
+A capacity plan built on 6.1 TB is not 10% optimistic, it is wrong by a factor of six and a half, and it is wrong in the direction that gets approved. This is also the objection \`the-principal\` fires as \`compression_assumed\` the moment a ratio appears without a measurement behind it, and the surviving answer is per column: *the low-cardinality dimensions dictionary-encode hard, the timestamps delta-encode, the free-text column barely compresses and dominates the residual size — and here is the per-column compressed size from our own footers.*
+
+## Line 2 — scanned bytes, per class, split computed from bounded
+
+Per query, three factors and nothing else:
+
+\`\`\`text
+per-query bytes  =  table bytes  ×  columns projected  ×  (1 − pruned)
+dashboards       =  40 TB        ×  0.09              ×  0.05    =  180 GB
+pipelines        =  40 TB        ×  0.02              ×  0.03    =   24 GB
+\`\`\`
+
+Multiply by frequency and split the classes by whether they are computable at all:
+
+\`\`\`text
+dashboards   180 GB × 996/day   =  179.3 TB/day   COMPUTED
+pipelines     24 GB ×  96/day   =    2.3 TB/day   COMPUTED
+analysts     quota 200 GB/query =    1.5 TB/day   CEILING, not a forecast
+                                   ─────────────
+                                     183.1 TB/day
+\`\`\`
+
+Two things about that column of numbers. **183.1 TB/day against a 40 TB table is 4.6 table-reads a day** — which is what a thousand dashboard refreshes over a rolling window actually means, and it is the sentence that makes the figure believable rather than alarming. And **the ad-hoc class is a fence, not an estimate**: it has no schedule and a long tail, so multiplying a central estimate by a query count produces a number wrong in an unbounded direction. Report the ceiling.
+
+The three-factor form also tells you where to spend. Improve projection 3× and pruning 3× and you have a 9× cut; **the factor still sitting at 1× is the whole story.** Here that factor is queries per day, and the intervention is a dashboard cache or a materialised rollup rather than another week on the sort key.
+
+## Lines 3 and 4 — files and metadata, which are a different curve from bytes
+
+\`\`\`text
+files        =  40 TB ÷ 512 MB target        =    78,125
+row groups   =  78,125 × 8 per file          =   625,000
+footer bytes =  78,125 × 24 KiB              =   1.79 GiB   (if you opened them all)
+\`\`\`
+
+Nobody opens all of them, and that is exactly why the number belongs in the model: **the fraction you open is a property of your partition scheme, not of your data volume.** Storage grows with data; metadata grows with file count; those are different curves, and they diverge the moment somebody halves a commit interval — same bytes, twice the files, twice the planning work, no change to line 1. When a capacity plan meets a limit, the limit is usually the catalog rather than the disk, and this is the line that predicts it.
+
+## Line 5 — ingest, expressed as a file size rather than a rate
+
+\`\`\`text
+logical/day  =  110 TB ÷ 720 days                      =  152.8 GB/day
+stored/day   =  152.8 GB ÷ 2.75                        =   55.6 GB/day
+files/day    =  96 commits × 6 partitions × 2 writers  =    1,152
+average file =  55.6 GB ÷ 1,152                        =   48.3 MB
+\`\`\`
+
+48.3 MB against a 512 MB target means compaction must merge roughly 10:1, which at a fanout of 8 is **two passes** — every ingested byte written more than once, forever, on a schedule nobody asked for. That is \`ingest-desk\` and \`compaction-desk\` territory rather than this one, but the number belongs here because **the sizing model is where the small-file problem is visible before it exists.** A design review that sees 48.3 MB on this line has a conversation about the commit interval; one that sees "55.6 GB/day" has no conversation at all.`,
+    },
+    {
+      type: 'prose',
+      md: `## Line 6 — growth, as two terms, because they have different mechanisms
+
+One blended percentage hides the dangerous term. So:
+
+\`\`\`text
+data growth      ×1.4 / year   the table grows with the business. Predictable.
+adoption growth  ×1.6 / year   more dashboards, more analysts. Larger and vaguer.
+                 ──────────
+12 months        ×2.24         181.6 TB/day  →  406.7 TB/day recurring
+24 months        ×5.02         181.6 TB/day  →  911 TB/day recurring
+\`\`\`
+
+Three properties of that arithmetic worth saying out loud in the room.
+
+**They multiply, and nobody's intuition does that.** 40% and 60% sound like 100%; they are 124% in one year and 402% in two. The compounding is where the surprise lives.
+
+**Only one of them touches line 1.** Data growth takes stored bytes from 40 TB to 56 TB at twelve months and 78 TB at twenty-four. Adoption growth adds *nothing* to storage and doubles the scan volume, which is why a platform can look fine on a storage dashboard while the invoice goes up every month for a year — the exact sentence \`the-cfo\` opens with.
+
+**The ad-hoc ceiling does not grow.** It is added flat at the horizon, because it is a fence rather than a forecast: it is the thing that stops adoption growing the bill. If you model the quota as growing with adoption you have modelled a quota that is not a quota.
+
+And adoption growth is the term that gets omitted, because it has no ticket. More dashboards and more analysts arrive without a migration, without a schema change and without anyone asking the platform team. \`growth_modelled\` names it as the larger and less predictable term for that reason, and fails the omission specifically.
+
+## Why an omission fails a check that a wrong number would pass
+
+This is the structural point of the whole lesson, and it generalises past sizing.
+
+\`per_query\` and \`daily_total\` are graded in a ±15% band. Be 14% out and you pass; be 40% out and the desk itemises the three factors and tells you which one you left at 1.0. **Being wrong is recoverable and instructive.**
+
+\`shape_stated\` and \`growth_modelled\` are graded on presence. There is no band, because there is nothing to be within. And the reason they are graded that way is that **an omitted term is not a small error, it is an unbounded one**: nobody can multiply a byte count by anything without the shape, and nobody can budget a year against a figure with no growth mechanism. The desk's own language for it is the sentence to remember — *the omission is the problem, not the estimate; your point figure can be exact and still un-actionable.*
+
+Which gives you the professional habit: **when you are short of time, complete the itemisation before you refine any single number.** Six rough lines with a shape and two growth terms is a plan. One exquisite line is a measurement.`,
+    },
+    {
+      type: 'statline',
+      stats: [
+        {
+          value: '2.75×',
+          label: 'the floor ratio, against 18× averaged',
+          hint: 'C1.L4: nine columns at 20× and one at 1× holding a third of the bytes. Ratios do not average — add the compressed sizes and divide.',
+        },
+        {
+          value: '6.5×',
+          label: 'how short a plan built on the average ratio comes in',
+          hint: '110 TB logical is 6.1 TB at 18× and 40 TB at the floor. Not 10% optimistic — wrong by a factor of six and a half, in the direction that gets approved.',
+        },
+        {
+          value: '4.6',
+          label: 'table-reads per day at 183.1 TB scanned',
+          hint: '183.1 TB/day against a 40 TB table. Quoting the ratio rather than the raw figure is what makes a large number believable instead of alarming.',
+        },
+        {
+          value: '×5.02',
+          label: 'the two growth terms compounded over 24 months',
+          hint: '1.4 squared for data times 1.6 squared for adoption. Forty and sixty per cent sound like one hundred; they are four hundred over two years.',
+        },
+      ],
+    },
+    {
+      type: 'diagram',
+      caption: 'fig 1 — six line items, one shape, and the term whose absence fails the desk',
+      height: 72,
+      nodes: [
+        { id: 'logical', x: 1, y: 2, w: 31, h: 9, label: '1a · logical bytes', sub: '110 TB — rows × width', color: '#FBBF24' },
+        { id: 'floor', x: 34, y: 2, w: 31, h: 9, label: '1b · the FLOOR ratio', sub: '2.75×, not the 18× average', color: '#FB7185' },
+        { id: 'stored', x: 67, y: 2, w: 32, h: 9, label: '1c · stored bytes', sub: '40 TB — line 1 of the plan', color: '#FBBF24' },
+        { id: 'scanned', x: 1, y: 15, w: 31, h: 9, label: '2 · scanned/day', sub: '181.6 computed + 1.5 bound', color: '#22D3EE' },
+        { id: 'files', x: 34, y: 15, w: 31, h: 9, label: '3,4 · files + metadata', sub: '78,125 files · 1.79 GiB footers', color: '#22D3EE' },
+        { id: 'ingest', x: 67, y: 15, w: 32, h: 9, label: '5 · ingest', sub: '55.6 GB/day → 48.3 MB/file', color: '#22D3EE' },
+        { id: 'model', x: 14, y: 28, w: 72, h: 9, label: 'the sizing model', sub: 'six lines, each attackable on its own', color: '#A78BFA' },
+        { id: 'growth', x: 1, y: 41, w: 48, h: 9, label: '6 · growth, TWO terms', sub: 'data ×1.4/yr AND adoption ×1.6/yr', color: '#FB7185' },
+        { id: 'shape', x: 51, y: 41, w: 48, h: 9, label: 'the pricing shape, named', sub: 'which count is actually the bill', color: '#A3E635' },
+        { id: 'horizon', x: 14, y: 54, w: 72, h: 9, label: 'month 12: 408 TB/day, 56 TB stored', sub: '×2.24 recurring, ad-hoc ceiling added flat', color: '#3EF2A4' },
+        { id: 'verdict', x: 14, y: 64, w: 72, h: 8, label: 'so: complete the itemisation before refining any one number', sub: 'the omission fails the check that a 14% error would have passed', color: '#FBBF24' },
+      ],
+      edges: [
+        { from: 'logical', to: 'floor' },
+        { from: 'floor', to: 'stored' },
+        { from: 'stored', to: 'scanned' },
+        { from: 'stored', to: 'files' },
+        { from: 'stored', to: 'ingest' },
+        { from: 'scanned', to: 'model' },
+        { from: 'files', to: 'model' },
+        { from: 'ingest', to: 'model' },
+        { from: 'model', to: 'growth' },
+        { from: 'model', to: 'shape' },
+        { from: 'growth', to: 'horizon' },
+        { from: 'shape', to: 'horizon' },
+        { from: 'horizon', to: 'verdict' },
+      ],
+      steps: [
+        {
+          caption:
+            'Line one is two numbers and a division, and the division is where capacity plans go wrong: logical bytes are easy, and the ratio must be the floor the bytes actually obey rather than an average of per-column ratios.',
+          active: ['logical', 'floor', 'stored'],
+          edges: ['logical->floor', 'floor->stored'],
+        },
+        {
+          caption:
+            'Stored bytes then feed three independent lines: what queries read per day, how many files and footers exist to be planned over, and what the ingest rate implies about the size of the files being created.',
+          active: ['scanned', 'files', 'ingest'],
+          edges: ['stored->scanned', 'stored->files', 'stored->ingest'],
+        },
+        {
+          caption:
+            'Those five lines are the model, and its value is that a reviewer can reject one row without rejecting the total — which is the difference between a number that gets argued with and a number that gets ignored.',
+          active: ['model'],
+          edges: ['scanned->model', 'files->model', 'ingest->model'],
+        },
+        {
+          caption:
+            'Then the two terms graded on presence rather than accuracy: growth as two separate factors with different mechanisms, and the pricing shape that determines which of these counts is the bill at all.',
+          active: ['growth', 'shape'],
+          edges: ['model->growth', 'model->shape'],
+        },
+        {
+          caption:
+            'Only now is there a horizon figure, and note which lines move: data growth raises stored bytes while adoption growth raises only scan volume, which is how a platform looks stable on storage and rises every month on the invoice.',
+          active: ['horizon'],
+          edges: ['growth->horizon', 'shape->horizon'],
+        },
+        {
+          caption:
+            'Hence the rule for when you are out of time before the review: finish all six lines roughly rather than perfecting one, because a fifteen per cent error is inside the band and a missing term is outside it entirely.',
+          active: ['verdict'],
+          edges: ['horizon->verdict'],
+        },
+      ],
+    },
+    {
+      type: 'callout',
+      variant: 'warning',
+      title: 'the three numbers people bring instead of a sizing model',
+      md: `Each of these is something a competent engineer says in a real meeting, and each fails a specific check.
+
+**"The table is about 40 TB and columnar compresses roughly 10×, so figure 4 TB."** This is line 1 with somebody else's ratio, and it imports their column mix into your capacity model. It also confuses the two directions: 40 TB is already stored, so dividing again sizes the platform at a tenth of what it needs. \`the-cfo\` has a harder version of the same objection — quoting a compression ratio as an answer to "how much will it read" states the size of the stored data and calls it the size of the bill.
+
+**"Analysts run about 120 queries a day at roughly 40 GB each, so 4.8 TB."** A point estimate for a long-tailed, uncontrolled distribution. The mean is not the risk; one unpredicated scan can exceed the modelled daily total on its own. Doubling it for safety is still a forecast, just a vaguer one. The engineering answer is a per-query quota and a pool ceiling; the reporting answer is to present the ceiling as a ceiling.
+
+**"We expect it to roughly double over two years."** A number with no mechanism. It might be right and neither of you can tell, which means you will not know you were wrong until the invoice arrives. Two terms with mechanisms — the table grows with the business, the query mix grows with adoption — is both more honest and, at ×5.02, a materially different answer.`,
+    },
+    {
+      type: 'desk',
+      desk: 'scan-desk',
+      brief:
+        'Submit the sizing model: per-query bytes for every query class, the daily total as recurring-computed plus ad-hoc-bounded, the pricing shape by name, and growth as two separately stated terms. Four checks, all taught above. per_query — table bytes × columns projected × (1 − pruned), per CLASS and never per table, graded within ±15%; a factor left at 1.0 is usually the term you dropped. daily_total — the recurring subtotal plus the ad-hoc CEILING, in the same band; the usual cause of a low figure is omitting the ad-hoc ceiling entirely, which is the largest line in the budget you did not write. shape_stated — one of per-byte-scanned, provisioned-compute, per-node-hour or credits-per-warehouse-second, because a byte count with no shape is a measurement rather than a budget. growth_modelled — data growth AND adoption growth, named separately; blending them hides the dangerous one, and the desk fails the omission even where your point estimate for today is exact. Bring the caveat with you: state which ratio is the floor and whether you measured it.',
+    },
+    {
+      type: 'callout',
+      variant: 'analogy',
+      title: 'the ninety-second version, caveat first',
+      md: `> "The weakness first: the compression ratio underneath all of this is 2.75×, and it is a floor rather than an average — one free-text column is a third of our raw bytes and compresses about 1×, so it dominates the stored size. If we had used the 18× that averaging the column ratios suggests, this plan would say 6.1 TB instead of 40 TB, and we would be short by a factor of six and a half.
+>
+> So: 110 TB logical, 40 TB stored, 78,125 files at a 512 MB target. Queries read 183 TB a day — that is 4.6 reads of the table, which is what a thousand dashboard refreshes over a rolling window means. Of that, 181.6 TB is computed per class and 1.5 TB is a quota on the analyst pool, reported as a ceiling rather than a forecast, because that workload has no schedule.
+>
+> We are on per-byte-scanned, so bytes are the bill directly and the layout work converts into money rather than headroom. Growth is two terms because they have different mechanisms: the table grows about 40% a year and adoption about 60%, and they multiply — 183 TB a day becomes 408 at twelve months and about 913 at twenty-four. Adoption is the larger and vaguer term and it arrives without a ticket, which is why the quota exists.
+>
+> The line I would watch is ingest: 48.3 MB average file against a 512 MB target means two compaction passes per byte, and if anyone shortens the commit interval that gets worse without any of the other five lines moving."
+
+Every figure in there is arithmetic the listener can redo. The paragraph concedes its weakest input in the first sentence, which is what stops the room hunting for it — and it converts the concession into a decision, because naming the floor is why the number is 40 TB and not 6.1 TB.`,
+    },
+    {
+      type: 'isomorphism',
+      title: 'a sizing model ≡ estimates you already defend',
+      pairs: [
+        {
+          os: 'a project estimate with a risk register',
+          osLine:
+            'The estimate is not what makes it credible. The register is: named risks with sizes, so a reviewer can argue with one line instead of rejecting the total.',
+          llm: 'six itemised terms',
+          llmLine:
+            'Identical structure. A reviewer can reject the 2.75× ratio without rejecting the file count, and a total with no itemisation gives them only two options — accept it or ignore it.',
+        },
+        {
+          os: 'Amdahl\'s law',
+          osLine:
+            'Speed up 90% of the work by any factor you like and the remaining 10% caps the result. The discipline is to measure which part dominates before optimising anything.',
+          llm: 'the floor compression ratio',
+          llmLine:
+            'Compress nine columns perfectly and the tenth sets your stored size: 2.75× where averaging says 18×. Nothing is ever stored at the mean ratio.',
+        },
+        {
+          os: 'admission control and load shedding',
+          osLine:
+            'You do not forecast the demand of an uncontrolled client. You give it a quota, isolate it in its own pool, and publish the limit so the failure is bounded and visible.',
+          llm: 'the ad-hoc pool ceiling',
+          llmLine:
+            'A quota of 200 GB per query and 1.5 TB a day, reported as a ceiling. It is added flat at the horizon because a quota that grows with adoption is not a quota.',
+        },
+      ],
+    },
+    {
+      type: 'quiz',
+      questions: [
+        {
+          q: 'You have four hours before a funding review. Your per-query figures are rough, you have no growth term and you have not established the pricing shape. Where do the four hours go?',
+          options: [
+            'Refining the per-query bytes for the dashboard class, since it is 98% of the recurring volume and the accuracy of the total depends on it',
+            'Establishing the pricing shape and both growth terms first, then leaving the per-query figures rough: the arithmetic checks grade in a ±15% band while the shape and growth checks grade on presence, so an omission is unbounded where a rough figure is not',
+            'Building a bottom-up model of every query in the query log, so the total is defensible line by line rather than by class',
+            'Adding a contingency factor to the current total to cover both the estimation error and the growth you have not modelled',
+          ],
+          correct: [1],
+          explanation:
+            'The two kinds of check fail for different reasons and only one of them is recoverable. A per-query figure that is 14% out passes the band, and one that is 40% out gets itemised back to you with the factor you dropped — instructive, and survivable. A missing pricing shape means nobody in the room can multiply your byte count by anything, and a missing growth term means the figure is a photograph of a moving object; neither has a magnitude, so neither has a tolerance. Option one perfects a line that was already inside the band. Option three is the right instinct at the wrong altitude: per-class is the unit the desk grades, and a per-query enumeration will not finish in four hours. Option four folds two different unknowns into one number and destroys the itemisation that makes the model arguable.',
+        },
+        {
+          q: 'A vendor benchmark reports 10× compression on analytical data. Your own table has one free-text column holding about a third of the raw bytes. What number goes in the sizing model, and how do you defend it?',
+          options: [
+            '10×, since it is a published figure from a credible source and adjusting it downward without evidence is guesswork',
+            'The floor computed from your own per-column footer sizes — here 2.75×, because the resistant column dominates the stored bytes once the others have compressed — quoted with the observation that a plan built on the average would be short by 6.5×',
+            '5×, halving the published figure as a conservative allowance for the text column',
+            '10× for the analytical columns and a separate line for the text column, so the plan carries two ratios and the reviewer can pick',
+          ],
+          correct: [1],
+          explanation:
+            'A compression ratio is a property of your column mix, not of the format, so a published figure imports somebody else\'s data into your capacity model. The fix is a query against your own footers, which already contain per-column compressed and uncompressed sizes: sort by compressed size and plan from the top few. Ratios also do not average — you add the compressed sizes and divide — which is why nine columns at 20× and one at 1× yields 2.75× rather than 18×. Halving the published number is still somebody else\'s figure with a safety factor and it happens to be wrong by nearly 2× here. Option four sounds rigorous but hands the reviewer a choice that has one correct answer, and the correct answer is the combined floor: what fills the disk is the sum, not either ratio.',
+        },
+        {
+          q: 'Your model says 183 TB/day today. You state it with the pricing shape, the per-class itemisation and a data growth term of 40% a year. scan-desk still fails you. On what, and why does that matter commercially?',
+          options: [
+            'On daily_total, because the ad-hoc class was reported as a ceiling rather than as an estimate',
+            'On growth_modelled: adoption growth is a separate term and it is the larger and less predictable one — 1.6× a year against data\'s 1.4× — so omitting it understates month 24 by about 2.5×, and it is the term that arrives without a migration or a ticket for anyone to notice',
+            'On per_query, because a 40 TB table cannot be read 4.6 times a day and the figure must be an arithmetic error',
+            'On shape_stated, because naming the shape is not sufficient without the rate that goes with it',
+          ],
+          correct: [1],
+          explanation:
+            'Growth is two terms with different mechanisms, and the check fails an omission of either. Data growth compounds the bytes; adoption growth compounds the number of times they are read, and only the second one can double your bill without a single change to the platform — more dashboards and more analysts do not file a ticket. Over 24 months data growth alone gives 1.96× where both terms give 5.02×, so a plan with one term understates the horizon by roughly two and a half times, and it does so in the direction that gets signed. Option one inverts the rule: reporting an uncontrolled workload as a ceiling is what the desk wants. Option three misreads a perfectly ordinary figure — a thousand dashboard refreshes over a rolling window read the recent data repeatedly. Option four contradicts the course rule that a shape is a name and the rate belongs to the reader.',
+        },
+      ],
+    },
+    {
+      type: 'deepdive',
+      title: 'going deeper: estimation as a professional discipline',
+      md: `**On separating what is computable from what must be bounded.** The transferable material is not from databases. **Douglas Hubbard's *How to Measure Anything*** is the standard reference on giving decision-makers calibrated ranges instead of false points, and its central move — decompose until each part is either measurable or explicitly bounded — is exactly the six-line itemisation above. Read it alongside the **SRE literature on admission control and load shedding**, because an ad-hoc analytics pool is an admission-control problem wearing a finance costume.
+
+**On why the floor and not the average.** The general statement is **Amdahl's law** (1967), and the storage version is worth deriving once by hand so you never quote a table-level ratio again. The **Parquet encodings specification** is the mechanism side: read what \`RLE_DICTIONARY\` and \`DELTA_BINARY_PACKED\` actually do, and note that \`BYTE_STREAM_SPLIT\` reduces nothing on its own — it reorders float bytes so a downstream general-purpose compressor has something to find. A "compression" feature can be a preparation step rather than a codec.
+
+**On growth as two terms.** There is no paper for this; there is a pattern. Every analytics cost post-mortem published by anybody separates, after the fact, into "the data got bigger" and "more people used it", and the second term is always the larger and always the unbudgeted one. → \`vectorspace\` makes the same split for index builds against query volume, and the arithmetic is identical.
+
+**On metadata as its own curve.** → \`tablespace T0.L2\` has the random-versus-sequential cost model that explains why 78,125 footers is a different kind of cost from 40 TB of data, and the **Iceberg spec**'s manifest layout is where you can see the count being paid for. This is the line that decides \`capacity-desk\`'s \`first_limit\` question, and the answer is usually the catalog.
+
+**What this model deliberately does not contain.** No price, in any currency, ever — the shape changes an architecture and a number makes a document stale within two quarters. No wall-clock. No latency. Every cost term here is a count, which is what makes it the same number on your platform as on mine, and what makes \`the-cfo\`'s opening demand answerable: *bytes, files, footers, engineer-months.*
+
+Next: **A1.L4** adds the term this model quietly assumed away. Every figure above is a single-tenant figure, and the moment there are 400 tenants the mean stops existing — the largest sets your capacity and the smallest sets your per-query metadata overhead.`,
+    },
+  ],
+}
+
+export default lesson

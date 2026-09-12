@@ -32,7 +32,7 @@ import { DuckLabView } from '@/components/ducklabs'
 import { getDesk } from '@/lib/desks'
 import { useProgress } from '@/lib/progress'
 import { cn } from '@/lib/utils'
-import { SIM_INFO } from '@/data/lessons'
+import { SIM_INFO } from '@/data/lessons/track-extras'
 import type {
   CalloutBlock,
   CodeBlockData,

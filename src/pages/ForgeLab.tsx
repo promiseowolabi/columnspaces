@@ -13,7 +13,7 @@ import {
   X,
 } from 'lucide-react'
 import { FORGE_LABS } from '@/data/labs'
-import { lessonById } from '@/data/lessons'
+import { lessonMeta } from '@/data/lessons/manifest'
 import { getTrack } from '@/lib/tracks'
 import { useProgress, XP } from '@/lib/progress'
 import { LabAbiError, LabTrapError, runLabWasm, type LabReport } from '@/lib/wasm-lab'
@@ -104,7 +104,7 @@ export default function ForgeLab() {
   }
 
   const track = getTrack(lab.trackId)
-  const lesson = lessonById(lab.lessonId)
+  const lesson = lessonMeta(lab.lessonId)
   const done = labState?.done ?? false
   const report = run.kind === 'report' ? run.report : null
 
