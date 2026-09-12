@@ -48,6 +48,7 @@ import type {
   VendorBlock,
 } from '@/data/lessons/types'
 import { renderInline, slugify } from './markdown'
+import { layoutNodeText, trimEdge } from './diagram-text'
 
 /* ------------------------------------------------------------------ */
 /* markdown-lite block renderer (prose)                                */
@@ -306,12 +307,12 @@ function DiagramView({ block, trackColor }: { block: DiagramBlock; trackColor: s
   const activeSet = useMemo(() => new Set(cur?.active ?? []), [cur])
   const edgeSet = useMemo(() => new Set(cur?.edges ?? []), [cur])
 
+  /* Boxes, not just centres: edges are trimmed to the borders so an arrow lands
+   * ON its target instead of being drawn through the target's own label. */
   const nodeById = useMemo(() => {
-    const m = new Map<string, { cx: number; cy: number }>()
+    const m = new Map<string, { x: number; y: number; w: number; h: number }>()
     for (const n of block.nodes) {
-      const w = n.w ?? 18
-      const h = n.h ?? 9
-      m.set(n.id, { cx: n.x + w / 2, cy: n.y + h / 2 })
+      m.set(n.id, { x: n.x, y: n.y, w: n.w ?? 18, h: n.h ?? 9 })
     }
     return m
   }, [block.nodes])
@@ -342,35 +343,25 @@ function DiagramView({ block, trackColor }: { block: DiagramBlock; trackColor: s
 
         {/* edges under nodes */}
         {(block.edges ?? []).map((e) => {
-          const a = nodeById.get(e.from)
-          const b = nodeById.get(e.to)
-          if (!a || !b) return null
+          const fa = nodeById.get(e.from)
+          const fb = nodeById.get(e.to)
+          if (!fa || !fb) return null
           const key = `${e.from}->${e.to}`
           const on = edgeSet.has(key)
+          const seg = trimEdge(fa, fb)
           return (
             <g key={key} style={{ transition: 'opacity 300ms' }} opacity={edgeSet.size === 0 ? 0.7 : on ? 1 : 0.18}>
               <line
-                x1={a.cx}
-                y1={a.cy}
-                x2={b.cx}
-                y2={b.cy}
+                x1={seg.x1}
+                y1={seg.y1}
+                x2={seg.x2}
+                y2={seg.y2}
                 stroke={on || edgeSet.size === 0 ? trackColor : '#2C3A4F'}
                 strokeWidth={on ? 0.7 : 0.4}
                 strokeDasharray={on ? '2 1.4' : undefined}
                 markerEnd={`url(#${on || edgeSet.size === 0 ? arrOn : arrOff})`}
               />
-              {e.label && (
-                <text
-                  x={(a.cx + b.cx) / 2}
-                  y={(a.cy + b.cy) / 2 - 1.2}
-                  textAnchor="middle"
-                  fontSize="2.6"
-                  fill={on ? '#E8EEF6' : '#5D6B80'}
-                  fontFamily="'JetBrains Mono', monospace"
-                >
-                  {e.label}
-                </text>
-              )}
+              {e.label && <title>{e.label}</title>}
             </g>
           )
         })}
@@ -400,33 +391,93 @@ function DiagramView({ block, trackColor }: { block: DiagramBlock; trackColor: s
                 strokeWidth={st === 'active' ? 0.6 : 0.4}
                 style={{ transition: 'fill 300ms, stroke 300ms' }}
               />
-              <text
-                x={n.x + w / 2}
-                y={n.sub ? n.y + h / 2 - 0.6 : n.y + h / 2 + 1}
-                textAnchor="middle"
-                fontSize="2.9"
-                fontWeight={500}
-                fill={st === 'idle' ? '#A3B0C2' : '#E8EEF6'}
-                fontFamily="'JetBrains Mono', monospace"
-              >
-                {n.label}
-              </text>
-              {n.sub && (
-                <text
-                  x={n.x + w / 2}
-                  y={n.y + h / 2 + 2.6}
-                  textAnchor="middle"
-                  fontSize="2.2"
-                  fill="#5D6B80"
-                  fontFamily="'JetBrains Mono', monospace"
-                >
-                  {n.sub}
-                </text>
-              )}
+              {/*
+                * Label and subtitle are WRAPPED and auto-sized to the box rather
+                * than drawn as one centred line at a fixed size. The old version
+                * overflowed 48% of the labels in this course and every long one
+                * ran across its neighbours; the box geometry was never the problem.
+                * layoutNodeText is pure and is asserted per node by
+                * tests/diagrams.test.ts, so an unfittable label fails the build
+                * instead of shipping clipped.
+                */}
+              {/*
+                * Every node carries its FULL text as a <title>, so nothing is lost
+                * when a subtitle is too tall for its box: it becomes a hover
+                * tooltip and an accessible name instead of being clipped. Before
+                * this, no node had a title at all.
+                */}
+              <title>{n.sub ? `${n.label} — ${n.sub}` : n.label}</title>
+              {(() => {
+                const tl = layoutNodeText(n.label, n.sub, { x: n.x, y: n.y, w, h })
+                return (
+                  <>
+                    {tl.label.lines.map((ln, i) => (
+                      <text
+                        key={`l${i}`}
+                        x={n.x + w / 2}
+                        y={tl.labelY[i]}
+                        textAnchor="middle"
+                        fontSize={tl.label.fontSize}
+                        fontWeight={500}
+                        fill={st === 'idle' ? '#A3B0C2' : '#E8EEF6'}
+                        fontFamily="'JetBrains Mono', monospace"
+                      >
+                        {ln}
+                      </text>
+                    ))}
+                    {tl.sub?.lines.map((ln, i) => (
+                      <text
+                        key={`s${i}`}
+                        x={n.x + w / 2}
+                        y={tl.subY[i]}
+                        textAnchor="middle"
+                        fontSize={tl.sub!.fontSize}
+                        fill="#5D6B80"
+                        fontFamily="'JetBrains Mono', monospace"
+                      >
+                        {ln}
+                      </text>
+                    ))}
+                  </>
+                )
+              })()}
             </g>
           )
         })}
       </svg>
+
+      {/*
+        * Edge labels live HERE, not on the canvas.
+        *
+        * They used to be drawn at the midpoint of each line, and on a dense
+        * diagram a midpoint routinely lands on another box — "store columns
+        * apart" was rendered straight across two of them. The gap between two
+        * adjacent boxes is a few units wide and a label is twenty or thirty, so no
+        * amount of nudging fixes it. Below the figure there is a whole line free,
+        * only the highlighted edges are listed, and each is still hoverable on the
+        * line itself via its <title>.
+        */}
+      {(() => {
+        const shown = (block.edges ?? []).filter(
+          (e) => e.label && edgeSet.has(`${e.from}->${e.to}`),
+        )
+        if (shown.length === 0) return null
+        return (
+          <ul className="mt-3 flex flex-wrap gap-x-4 gap-y-1">
+            {shown.map((e) => (
+              <li
+                key={`${e.from}->${e.to}`}
+                className="font-mono text-[11px] text-text-2"
+              >
+                <span aria-hidden style={{ color: trackColor }}>
+                  →
+                </span>{' '}
+                {e.label}
+              </li>
+            ))}
+          </ul>
+        )
+      })()}
 
       {/* step controls */}
       <div className="mt-3 flex items-center justify-between gap-3 border-t border-line pt-3">
